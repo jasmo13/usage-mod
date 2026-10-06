@@ -201,6 +201,76 @@ test('the context tile measures against compaction', async ($, on) => {
   }
 })
 
+test('a chat whose transcript is over the read limit still loads its history', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.parse('2027-01-01T00:00:00Z') })
+  on('session.usage', () => ({ value: USAGE }))
+  on('session.id', () => ({ value: 's1' }))
+  on('session.root', () => ({ value: '/proj' }))
+  on('session.cwd', () => ({ value: '/proj' }))
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  const logs: string[] = []
+  on('ui.log', (_$, e) => {
+    logs.push(e.text)
+    return { value: undefined }
+  })
+  on('ui.status', () => ({ value: undefined }))
+  const env: Record<string, string> = { CLAUDE_CONFIG_DIR: '/cfg', OS: 'Windows_NT' }
+  on('env.get', (_$, e) => ({ value: env[e.name] }))
+  // The engine hands a hook the path made absolute for this machine.
+  const isTranscript = (path: string | undefined) => path?.replace(/\\/g, '/').endsWith('/cfg/projects/-proj/s1.jsonl') === true
+  on('fs.exists', (_$, e) => ({ value: isTranscript(e.path) }))
+  // Past what one read may copy: the engine refuses it.
+  on('fs.stat', () => ({ value: { kind: 'file' as const, size: 9_000_000, mtimeMs: 0, isLink: false } }))
+  on('fs.read', () => {
+    throw new Error('over 4 MiB')
+  })
+  const row = JSON.stringify({ type: 'assistant', timestamp: '2026-01-01T00:00:00Z', message: { id: 'm1', model: 'claude-opus-5-5', usage: USAGE_ROW } })
+  const spawned: { argv: readonly string[]; env?: Readonly<Record<string, string>> }[] = []
+  on('process.spawn', async function* (_$, e) {
+    spawned.push({ argv: e.argv, env: e.env })
+    // A row cut across two pieces.
+    yield { stream: 'stdout' as const, text: `{"type":"other"}\n${row.slice(0, 40)}` }
+    yield { stream: 'stdout' as const, text: `${row.slice(40)}\n` }
+    return { value: { code: 0, signal: null } }
+  })
+
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await clock.advance(100)
+  expect(logs).toEqual([])
+  expect(spawned).toHaveLength(1)
+  expect(spawned[0]?.argv[0]).toBe('powershell.exe')
+  expect(isTranscript(spawned[0]?.env?.SESSION_USAGE_FILE), 'the path rides the environment, unquoted').toBe(true)
+
+  const ui = await $.ui.mount({ plugin: 'session-usage', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await ui.find({ text: /^43k$/ }), 'history tokens before any turn').toBeDefined()
+  await ui.unmount()
+})
+
+test('a new chat shows the last rate-limit reading until its first reply', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.parse('2029-12-31T23:00:00Z') })
+  const kept = [
+    { kind: 'five_hour', percentUsed: 40, resetsAt: '2030-01-01T00:00:00Z' },
+    // Reset already: says nothing about now.
+    { kind: 'seven_day', percentUsed: 90, resetsAt: '2029-12-01T00:00:00Z' },
+  ]
+  on('store.get', () => ({ value: kept }))
+  on('store.set', () => ({ value: undefined }))
+  let usage: typeof USAGE = { ...USAGE, rateLimits: [] }
+  on('session.usage', () => ({ value: usage }))
+  const ui = await $.ui.mount({ plugin: 'session-usage', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  await clock.advance(2_000)
+  expect(await ui.find({ text: /5-hour/ }), 'kept reading').toBeDefined()
+  expect(await ui.find({ text: /^40%$/ }), 'its figure').toBeDefined()
+  expect(await ui.find({ text: /7-day/ }), 'a reset window is dropped').toBeUndefined()
+  // The first reply's own reading takes over.
+  usage = { ...USAGE, rateLimits: [{ kind: 'five_hour', percentUsed: 55, resetsAt: '2030-01-01T00:00:00Z' }] }
+  await clock.advance(2_000)
+  expect(await ui.find({ text: /^55%$/ }), 'live reading').toBeDefined()
+  await ui.unmount()
+})
+
 test('an idle band keeps refreshing with no events', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000 })
   let usage = USAGE

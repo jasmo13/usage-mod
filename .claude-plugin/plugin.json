@@ -1,6 +1,6 @@
 {
   "name": "session-usage",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A live usage band above the prompt for this Claude Code session: cost, tokens, cache, context, rate limits, turns, tools. Desktop and terminal.",
   "types": "./types/index.d.ts",
   "userConfig": {
