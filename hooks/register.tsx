@@ -597,10 +597,12 @@ export const register: Register = on => {
     const T = $.ui.resolve(e)
     // The engine's own line stays as it draws it, its pills live; the terminal draws it first, whatever the order here.
     const hint = await next(e)
+    // The line sits two cells in from each edge; below that it condenses rather than cut off.
+    const width = e.viewport ? e.viewport.columns - 4 : undefined
     return (
       <T.Box flexDirection="column">
         {hint}
-        {statusLine(T, usage as UsageModel, measure as Measure | null, breakdown as Breakdown | null, now)}
+        {statusLine(T, usage as UsageModel, measure as Measure | null, breakdown as Breakdown | null, now, width)}
       </T.Box>
     )
   })

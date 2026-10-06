@@ -43,7 +43,7 @@ A new chat shows the last reading it saw until fresh numbers arrive. Without a C
 - **⋯** (or `m`) opens the band's menu. In the terminal the button reads **...**:
   - **Show details** / **Hide details** (`d`)
   - **Copy JSON** (`c`) copies everything the band knows about this chat.
-  - **Show status line** / **Hide status line** (`s`), in the terminal only: a line of its own under the hint line below the prompt with what the band shows, so it can stand in for the band when the band is hidden. For example: `$0.26 · 61.1k tokens · Context window: 20% (205.9k until auto-compact) · Session limit: 16% (resets in 1 hr 56 min) · Weekly limit: 12% (resets Wed 4:00 AM)`. The cost is in orange, the dots and the notes in parentheses in gray. It's off until you choose it, and the choice carries over to every chat. The desktop app doesn't draw that line, so its menu leaves this out.
+  - **Show status line** / **Hide status line** (`s`), in the terminal only: a line of its own under the hint line below the prompt with what the band shows, so it can stand in for the band when the band is hidden. For example: `$0.26 · 61.1k tokens · Context window: 20% (205.9k until auto-compact) · Session limit: 16% (resets in 1 hr 56 min) · Weekly limit: 12% (resets Wed 4:00 AM)`. The cost is in orange, the dots and the notes in parentheses in gray. In a narrower terminal it condenses to fit, a step at a time: shorter notes (`205.9k left`, `1 hr 56 min`, `Wed 4:00 AM`), then shorter names (`Context`, `Session`, `Weekly`), then no notes, then no token count. It's off until you choose it, and the choice carries over to every chat. The desktop app doesn't draw that line, so its menu leaves this out.
   - **Hide band** (`h`)
 - `/usage-mod` shows or hides the band.
 

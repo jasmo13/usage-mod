@@ -660,33 +660,49 @@ export const band = (ctx: Ctx): RenderElement => {
 /**
  * The status line's parts, the cost first: what the band shows, on one line,
  * for a terminal that keeps the line and hides the band. A part's note goes in parentheses after it.
+ * `level` condenses it for a narrow terminal: 0 is everything in full; 1 shortens the notes;
+ * 2 shortens the names as well; 3 drops the notes; 4 drops the tokens too.
  */
-const statusParts = (u: UsageModel, m: Measure | null, b: Breakdown | null, now: number) => {
+const statusParts = (u: UsageModel, m: Measure | null, b: Breakdown | null, now: number, level = 0) => {
   const parts: { text: string; note?: string }[] = [
     // Whole cents: a bill is never a fraction of one.
     { text: m?.costUsd === undefined ? '—' : `$${m.costUsd.toFixed(2)}` },
-    { text: `${fmtTokens(sumTokens(u.totals))} tokens` },
   ]
+  if (level < 4) parts.push({ text: `${fmtTokens(sumTokens(u.totals))} tokens` })
+  const named = (full: string, short: string, pct: string) => `${level < 2 ? full : short}: ${pct}`
+  const noted = (full: string | undefined, short: string | undefined) => (level >= 3 ? undefined : level === 0 ? full : short ?? full)
   // Against the same window as the band's Context window meter, once the breakdown has counted it.
   const c = compaction(m, b)
-  if (c) parts.push({ text: `Context window: ${wholePct(c.pct)}`, note: `${fmtTokens(c.left)} ${c.at ? 'until auto-compact' : 'left'}` })
-  else if (m?.contextPercent !== undefined) parts.push({ text: `Context window: ${fmtPct(m.contextPercent)}` })
+  if (c) {
+    const left = `${fmtTokens(c.left)} left`
+    parts.push({ text: named('Context window', 'Context', wholePct(c.pct)), note: noted(c.at ? `${fmtTokens(c.left)} until auto-compact` : left, left) })
+  } else if (m?.contextPercent !== undefined) parts.push({ text: named('Context window', 'Context', fmtPct(m.contextPercent)) })
   for (const l of m?.rateLimits ?? []) {
-    const reset = fmtReset(l.kind, l.resetsAt, now)[0]
+    const [reset, span] = fmtReset(l.kind, l.resetsAt, now)
+    const lower = reset && `${reset[0]!.toLowerCase()}${reset.slice(1)}`
     // Named in full; the band's "Weekly · all models" would read as two parts between the line's dots.
-    parts.push({ text: `${rateLabel(l.kind)} limit: ${wholePct(l.percentUsed)}`, note: reset && `${reset[0]!.toLowerCase()}${reset.slice(1)}` })
+    parts.push({ text: named(`${rateLabel(l.kind)} limit`, rateLabel(l.kind), wholePct(l.percentUsed)), note: noted(lower, span ?? lower) })
   }
   return parts
 }
 
-/** The one-line summary the status line shows. */
-export const statusText = (u: UsageModel, m: Measure | null, b: Breakdown | null, now: number) =>
-  statusParts(u, m, b, now).map(p => (p.note ? `${p.text} (${p.note})` : p.text)).join(' · ')
+const joinParts = (parts: { text: string; note?: string }[]) => parts.map(p => (p.note ? `${p.text} (${p.note})` : p.text)).join(' · ')
+
+/** The fullest wording that fits `width` cells; the most condensed, cut at the edge, where none does. */
+const fitParts = (u: UsageModel, m: Measure | null, b: Breakdown | null, now: number, width = Infinity) => {
+  let parts = statusParts(u, m, b, now)
+  for (let level = 1; level <= 4 && joinParts(parts).length > width; level++) parts = statusParts(u, m, b, now, level)
+  return parts
+}
+
+/** The one-line summary the status line shows, condensed to fit `width` cells when given. */
+export const statusText = (u: UsageModel, m: Measure | null, b: Breakdown | null, now: number, width?: number) =>
+  joinParts(fitParts(u, m, b, now, width))
 
 /** The same summary drawn for the terminal: the cost in the band's orange, the dots and notes gray, the rest in the text color. */
-export const statusLine = (T: Base, u: UsageModel, m: Measure | null, b: Breakdown | null, now: number) => {
+export const statusLine = (T: Base, u: UsageModel, m: Measure | null, b: Breakdown | null, now: number, width?: number) => {
   const { Text } = T
-  const [cost, ...rest] = statusParts(u, m, b, now)
+  const [cost, ...rest] = fitParts(u, m, b, now, width)
   return (
     <Text wrap="truncate">
       <Text color={P.ember.hex}>{cost!.text}</Text>
