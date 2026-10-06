@@ -164,7 +164,7 @@ const compaction = (m: Measure | null, b: Breakdown | null) => {
   }
 }
 
-const sessionStart = (ctx: Ctx) => ctx.measure?.startedAt ?? ctx.usage.requests[0]?.t ?? ctx.usage.turns[0]?.startedAt
+const sessionStart = (ctx: Pick<Ctx, 'measure' | 'usage'>) => ctx.measure?.startedAt ?? ctx.usage.requests[0]?.t ?? ctx.usage.turns[0]?.startedAt
 
 /* ---------- vectors (desktop) ---------- */
 
@@ -603,6 +603,95 @@ const historyNote = (ctx: Ctx) => {
       {bf.note}
     </Text>
   ) : null
+}
+
+/* ---------- Copy JSON ---------- */
+
+/** A limit's name for the copy: "sessionLimit", "weeklyLimit". */
+export const limitKey = (kind: string) => {
+  const [first = '', ...rest] = `${rateLabel(kind)} limit`.toLowerCase().split(/\s+/)
+  return first + rest.map(w => `${w[0]!.toUpperCase()}${w.slice(1)}`).join('')
+}
+
+/** A percentage to one place, as the details write their shares. */
+const pct1 = (n: number, total: number) => (total > 0 ? Math.round((n / total) * 1000) / 10 : 0)
+
+/**
+ * What the band shows, under the band's own names and from the same helpers it draws with,
+ * so the copy and the band never disagree: numbers kept whole, not written as "60.8k".
+ */
+export const bandFigures = (d: Pick<Ctx, 'now' | 'usage' | 'measure' | 'breakdown' | 'running' | 'model'>) => {
+  const { usage: u, measure: m, breakdown: b } = d
+  const c = compaction(m, b)
+  const started = sessionStart(d)
+  const t = u.totals
+  const all = sumTokens(t)
+  const used = (b?.categories ?? []).filter(x => x.kind === 'used' && x.tokens > 0).sort((x, y) => y.tokens - x.tokens)
+  const sum = (kind: string) => (b?.categories ?? []).filter(x => x.kind === kind).reduce((a, x) => a + x.tokens, 0)
+  const tools = Object.entries(u.byTool).sort((x, y) => y[1].calls - x[1].calls)
+  const open = u.turns.at(-1)?.durationMs === undefined ? u.turns.at(-1) : undefined
+  const turn = open ?? u.turns.filter(x => x.durationMs !== undefined).at(-1)
+  const running = d.running.at(-1)
+  const limits = Object.fromEntries(
+    (m?.rateLimits ?? []).map(l => [
+      limitKey(l.kind),
+      { percent: l.percentUsed, resetsAt: l.resetsAt ?? null, resets: fmtReset(l.kind, l.resetsAt, d.now)[0] ?? null },
+    ]),
+  )
+  return {
+    model: d.model ? modelName(d.model) : null,
+    costUsd: m?.costUsd ?? null,
+    durationMs: started === undefined ? null : Math.max(0, d.now - started),
+    tokens: all,
+    contextWindow: c
+      ? {
+          percent: Math.round(c.pct * 10) / 10,
+          tokens: c.tokens,
+          window: c.window,
+          autoCompactAt: c.at ?? null,
+          [c.at ? 'untilAutoCompact' : 'left']: c.left,
+          categories: used.map(x => ({ name: CATEGORY[x.name]?.name ?? x.name, tokens: x.tokens, percent: pct1(x.tokens, c.window) })),
+          compactionBuffer: { tokens: sum('buffer'), percent: pct1(sum('buffer'), c.window) },
+          freeSpace: { tokens: sum('free'), percent: pct1(sum('free'), c.window) },
+        }
+      : { percent: m?.contextPercent ?? null, tokens: m?.contextTokens ?? null },
+    ...limits,
+    tokenKinds: {
+      fromCachePercent: Math.round(cacheHitRate(t) * 1000) / 10,
+      ...Object.fromEntries(KINDS.map(k => [k.key, { tokens: t[k.key], percent: pct1(t[k.key], all) }])),
+    },
+    activity: {
+      turns: u.turns.length,
+      requests: t.requests,
+      toolCalls: tools.reduce((a, [, x]) => a + x.calls, 0),
+      failed: tools.reduce((a, [, x]) => a + x.errors, 0),
+      mostUsed: tools.slice(0, 3).map(([n]) => n.replace(/^mcp__/, '')),
+      subagents: Object.keys(u.byAgent).filter(a => a !== 'main').length,
+      [open ? 'thisTurn' : 'lastTurn']: turn
+        ? {
+            durationMs: open ? d.now - open.startedAt : (turn.durationMs ?? 0),
+            requests: turn.requests,
+            tokens: sumTokens(turn.tokens),
+            costUsd: turn.costUsd ?? null,
+          }
+        : null,
+      running: running ? { tool: running.tool, ms: d.now - running.since } : null,
+    },
+  }
+}
+
+/**
+ * The measure as the copy gives it: the limits under the band's names, and the context against
+ * the window the band's meter shows, so its percentage is the band's.
+ */
+export const copiedMeasure = (m: Measure | null, b: Breakdown | null) => {
+  if (!m) return null
+  const c = compaction(m, b)
+  return {
+    ...m,
+    ...(c ? { contextTokens: c.tokens, contextWindow: c.window, contextPercent: Math.round(c.pct * 10) / 10 } : {}),
+    rateLimits: m.rateLimits.map(({ kind, ...l }) => ({ limit: limitKey(kind), ...l })),
+  }
 }
 
 /* ---------- the band ---------- */
