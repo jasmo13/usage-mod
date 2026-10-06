@@ -72,31 +72,11 @@ To try it from a local copy in the terminal without installing:
 claude --plugin-dir path/to/usage-mod
 ```
 
-To list it in a marketplace of your own instead, add this entry to that marketplace's `plugins`, then install it as `usage-mod@<marketplace>`:
-
-```json
-{
-  "name": "usage-mod",
-  "source": { "source": "url", "url": "https://github.com/jasmo13/usage-mod.git" },
-  "description": "A live usage band above the prompt."
-}
-```
-
 The plugin uses Claude Code's function-hook plugin API, and it was built and tested on Claude Code 2.1.288.
 
 ### Updating
 
-Releases come from `main`. After a new version is merged, update with the marketplace you installed it from (`usage-mod` if you followed the steps above):
-
-```bash
-claude plugin marketplace update <marketplace>
-```
-
-```bash
-claude plugin update usage-mod@<marketplace>
-```
-
-Installed with the steps above, that's:
+Releases come from `main`. After a new version is merged, update with:
 
 ```bash
 claude plugin marketplace update usage-mod
