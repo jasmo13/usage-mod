@@ -436,3 +436,23 @@ test('the status line measures context against the same window as the band', asy
   // Whole cents: a bill is never a fraction of one.
   expect(statusText(emptyModel(), measure, breakdown, 0)).toMatch(/^\$0\.26 · /)
 })
+
+test('the status line condenses to fit a narrow terminal', async () => {
+  const limits = [
+    { kind: 'five_hour', percentUsed: 19, resetsAt: new Date(94 * 60_000).toISOString() },
+    { kind: 'seven_day', percentUsed: 13, resetsAt: new Date(3 * 86_400_000).toISOString() },
+  ]
+  const measure = { at: 0, costUsd: 0, contextTokens: 61_078, contextPercent: 6.1, rateLimits: limits } as unknown as Measure
+  const breakdown = { at: 0, detail: 'full', model: 'claude-opus-5-5', totalTokens: 61_078, rawMaxTokens: 300_000, percentage: 20, autoCompactThreshold: 267_000, isAutoCompactEnabled: true, categories: [], memoryFiles: [], mcpTools: [], skills: [] } as Breakdown
+  const at = (width?: number) => statusText(emptyModel(), measure, breakdown, 0, width)
+  const full = at()
+  expect(full).toMatch(/^\$0\.00 · 0 tokens · Context window: 20% \(205\.9k until auto-compact\) · Session limit: 19% \(resets in 1 hr 34 min\) · Weekly limit: 13% \(resets .+\)$/)
+  expect(at(full.length), 'in full while it fits').toBe(full)
+  // Then the band's shorter notes, then its shorter names, then no notes, then no tokens.
+  expect(at(full.length - 1)).toMatch(/^\$0\.00 · 0 tokens · Context window: 20% \(205\.9k left\) · Session limit: 19% \(1 hr 34 min\) · Weekly limit: 13% \(\w{3} .+\)$/)
+  expect(at(105)).toMatch(/^\$0\.00 · 0 tokens · Context: 20% \(205\.9k left\) · Session: 19% \(1 hr 34 min\) · Weekly: 13% \(\w{3} .+\)$/)
+  expect(at(70)).toBe('$0.00 · 0 tokens · Context: 20% · Session: 19% · Weekly: 13%')
+  expect(at(55)).toBe('$0.00 · Context: 20% · Session: 19% · Weekly: 13%')
+  expect(at(20), 'cut at the edge past that').toBe('$0.00 · Context: 20% · Session: 19% · Weekly: 13%')
+  for (const width of [200, 150, 120, 100, 90, 80, 70, 60, 50]) expect(at(width).length, `${width} cells`).toBeLessThanOrEqual(width)
+})
