@@ -2,7 +2,7 @@ import type { RenderElement } from 'claude-code'
 import type { Breakdown, Measure } from '../types'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { cacheHitRate, emptyModel, fmtTokens, foldTranscript, projectSlug, sumTokens } from '../hooks/collect'
+import { cacheHitRate, emptyModel, fmtMs, fmtTokens, foldTranscript, projectSlug, sumTokens } from '../hooks/collect'
 import { statusText, textBar } from '../hooks/views'
 
 const BAND_PROPS = {
@@ -393,6 +393,14 @@ test('token counts read as the app writes them', () => {
   expect(fmtTokens(15_800, true)).toBe('15.8k')
   expect(fmtTokens(20_600_000, true)).toBe('20.6M')
   expect(fmtTokens(999_960, true)).toBe('1.0M')
+})
+
+test('durations read in whole units', () => {
+  expect(fmtMs(850)).toBe('850ms')
+  expect(fmtMs(4_200)).toBe('4s')
+  expect(fmtMs(59_600)).toBe('1m 0s')
+  expect(fmtMs(125_000)).toBe('2m 5s')
+  expect(fmtMs(3_780_000)).toBe('1h 3m')
 })
 
 test('the context breakdown is counted exactly, as the app panel counts it', async ($, on) => {

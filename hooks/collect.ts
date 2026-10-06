@@ -355,12 +355,13 @@ export const fmtUsd = (n: number | undefined) =>
   // Whole cents below $100: a bill is never a fraction of one.
   n === undefined ? '—' : n >= 100 ? `$${n.toFixed(0)}` : `$${n.toFixed(2)}`
 
+/** A duration in whole units: "850ms", "4s", "2m 5s", "1h 3m". */
 export const fmtMs = (ms: number) => {
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  const s = ms / 1000
-  if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)}s`
+  if (ms < 999.5) return `${Math.round(ms)}ms`
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${s}s`
   const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ${Math.round(s % 60)}s`
+  if (m < 60) return `${m}m ${s % 60}s`
   return `${Math.floor(m / 60)}h ${m % 60}m`
 }
 
