@@ -1,0 +1,14 @@
+{
+  "name": "session-usage",
+  "version": "0.2.0",
+  "description": "A live usage band above the prompt for this Claude Code session: cost, tokens, cache, context, rate limits, turns, tools. Desktop and terminal.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "statusLine": {
+      "type": "boolean",
+      "title": "Usage in the status line",
+      "description": "Also show cost, tokens, context and rate limits in the status line.",
+      "default": false
+    }
+  }
+}
