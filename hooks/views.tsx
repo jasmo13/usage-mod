@@ -141,11 +141,10 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
  * window where one is set (300k of a 1M model) and the model's limit where not.
  * `left` counts to where compaction runs, `tick` marks it on the window.
  */
-const compaction = (ctx: Ctx) => {
-  const b = ctx.breakdown
+const compaction = (m: Measure | null, b: Breakdown | null) => {
   if (!b || !b.rawMaxTokens) return undefined
   const window = b.rawMaxTokens
-  const tokens = ctx.measure?.contextTokens ?? b.totalTokens
+  const tokens = m?.contextTokens ?? b.totalTokens
   const at = b.isAutoCompactEnabled ? b.autoCompactThreshold : undefined
   return {
     window,
@@ -380,7 +379,7 @@ const meter = (ctx: Ctx, m: Meter, width: number, isBelow: boolean) => {
 
 const meters = (ctx: Ctx): Meter[] => {
   const m = ctx.measure
-  const c = compaction(ctx)
+  const c = compaction(ctx.measure, ctx.breakdown)
   const out: Meter[] = [
     c
       ? {
@@ -505,7 +504,7 @@ const headRow = (ctx: Ctx, canGrow: boolean) => {
  */
 const windowSection = (ctx: Ctx, width: number, limit: number) => {
   const b = ctx.breakdown
-  const c = compaction(ctx)
+  const c = compaction(ctx.measure, ctx.breakdown)
   if (!b || !c) return section(ctx, 'window', 'Context window', undefined, width, limit, [row(ctx, 'w-wait', width, 'Counted after the next reply', '', { isDim: true })])
   const used = b.categories.filter(x => x.kind === 'used' && x.tokens > 0).sort((x, y) => y.tokens - x.tokens)
   const reserve = b.categories.filter(x => x.kind === 'buffer').reduce((a, x) => a + x.tokens, 0)
@@ -605,7 +604,7 @@ const historyNote = (ctx: Ctx) => {
 const summaryLine = (ctx: Ctx) => {
   const { Text } = ctx.T
   const m = ctx.measure
-  const comp = compaction(ctx)
+  const comp = compaction(ctx.measure, ctx.breakdown)
   return (
     <Text wrap="truncate">
       <Text bold color={color(ctx, P.ember)}>
@@ -659,9 +658,12 @@ export const band = (ctx: Ctx): RenderElement => {
 }
 
 /** The one-line summary the status line shows. */
-export const statusText = (u: UsageModel, m: Measure | null) => {
+export const statusText = (u: UsageModel, m: Measure | null, b: Breakdown | null) => {
   const parts = [fmtUsd(m?.costUsd), `${fmtTokens(sumTokens(u.totals))} tok`]
-  if (m?.contextPercent !== undefined) parts.push(`ctx ${fmtPct(m.contextPercent)}`)
+  // Against the same window as the band's Context window meter, once the breakdown has counted it.
+  const c = compaction(m, b)
+  if (c) parts.push(`ctx ${wholePct(c.pct)}`)
+  else if (m?.contextPercent !== undefined) parts.push(`ctx ${fmtPct(m.contextPercent)}`)
   for (const l of m?.rateLimits ?? []) parts.push(`${rateLabel(l.kind)} ${wholePct(l.percentUsed)}`)
   return parts.join(' · ')
 }

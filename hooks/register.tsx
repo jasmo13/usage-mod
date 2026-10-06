@@ -172,7 +172,7 @@ let tickedAt = 0
 
 const pushStatus = async ($: $) => {
   if (!(await read($, statusA))) return
-  $.ui.status(statusText(await read($, usageA), await read($, measureA)))
+  $.ui.status(statusText(await read($, usageA), await read($, measureA), await read($, breakdownA)))
 }
 
 const refreshMeasure = async ($: $) => {
@@ -230,6 +230,7 @@ const refreshBreakdown = async ($: $, isForced = false) => {
       skills: (b.skills?.skillFrontmatter ?? []).map(s => ({ name: s.name, tokens: s.tokens })),
     }
     await update($, breakdownA, () => next)
+    await pushStatus($)
   } catch (error) {
     $.ui.log(`usage-mod: context breakdown unavailable (${String(error)})`, { to: 'debug' })
   } finally {
