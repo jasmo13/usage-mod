@@ -113,7 +113,8 @@ const fmtReset = (kind: string, iso: string | undefined, now: number): string[] 
   if (!Number.isFinite(at)) return []
   if (at <= now) return ['Resetting']
   if (kind === 'five_hour') {
-    const mins = Math.max(1, Math.floor((at - now) / 60_000))
+    // Partial minutes count up, as the panel does: 2 hr 16 min 30 s left reads "2 hr 17 min".
+    const mins = Math.max(1, Math.ceil((at - now) / 60_000))
     const h = Math.floor(mins / 60)
     const m = mins % 60
     const span = h === 0 ? `${m} min` : m === 0 ? `${h} hr` : `${h} hr ${m} min`

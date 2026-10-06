@@ -12,7 +12,7 @@ The top of the band has three meters, each an orange bar with its percentage. Th
 | **Session limit** | How much of your plan's 5-hour limit you've used, and the time left until it resets | Resets in 2 hr 37 min · 13% |
 | **Weekly · all models** | How much of your weekly limit you've used, and the day and time it resets, in your local time | Resets Wed 4:00 AM · 12% |
 
-Reset times are rounded to the nearest minute, as the app does. When the band is too narrow for the full wording beside a meter's name, the wording moves to a line under the bar, and on very narrow bands it shortens ("2 hr 37 min", "Weekly").
+Reset times are rounded to the nearest minute, and the time left for the session limit counts a partial minute as a whole one, as the app does. When the band is too narrow for the full wording beside a meter's name, the wording moves to a line under the bar, and on very narrow bands it shortens ("2 hr 37 min", "Weekly").
 
 Choose **Show details** to see more:
 
