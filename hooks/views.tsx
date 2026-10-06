@@ -128,6 +128,9 @@ const fmtReset = (kind: string, iso: string | undefined, now: number): string[] 
   return [`Resets ${when}`, when]
 }
 
+/** A token count: one place always in the terminal, as the app writes it elsewhere. */
+const tok = (ctx: Ctx, n: number) => fmtTokens(n, ctx.isTerminal)
+
 /** Each limit's name as the app's panel gives it, then shorter ones for tight rows. */
 const LIMIT_NAMES: Record<string, string[]> = {
   five_hour: ['Session limit', 'Session', '5h'],
@@ -385,16 +388,16 @@ const meters = (ctx: Ctx): Meter[] => {
       ? {
           key: 'context',
           labels: ['Context window', 'Context'],
-          details: c.at ? [`${fmtTokens(c.left)} until auto-compact`, `${fmtTokens(c.left)} left`, fmtTokens(c.left)] : [`${fmtTokens(c.left)} left`, fmtTokens(c.left)],
+          details: c.at ? [`${tok(ctx, c.left)} until auto-compact`, `${tok(ctx, c.left)} left`, tok(ctx, c.left)] : [`${tok(ctx, c.left)} left`, tok(ctx, c.left)],
           pct: c.pct,
           tick: c.tick,
-          alt: `Context ${wholePct(c.pct)} of ${fmtTokens(c.window)}, ${fmtTokens(c.left)} tokens ${c.at ? 'until compaction' : 'left'}`,
+          alt: `Context ${wholePct(c.pct)} of ${tok(ctx, c.window)}, ${tok(ctx, c.left)} tokens ${c.at ? 'until compaction' : 'left'}`,
         }
       : {
           // Before the breakdown arrives: the status line's figures.
           key: 'context',
           labels: ['Context window', 'Context'],
-          details: m?.contextTokens === undefined ? [] : [fmtTokens(m.contextTokens)],
+          details: m?.contextTokens === undefined ? [] : [tok(ctx, m.contextTokens)],
           pct: m?.contextPercent,
           alt: `Context ${m?.contextPercent ?? 0}% full`,
         },
@@ -421,7 +424,7 @@ const sessionBlock = (ctx: Ctx, width: number) => {
   const started = sessionStart(ctx)
   const cost = fmtUsd(ctx.measure?.costUsd)
   const time = started ? fmtMs(Math.max(0, ctx.now - started)) : ''
-  const tokens = fmtTokens(sumTokens(t))
+  const tokens = tok(ctx, sumTokens(t))
   const cached = t.requests ? ` · ${fmtPct(cacheHitRate(t) * 100)} cached` : ''
   const tail = [` tokens${cached}`, ' tokens', ' tok', ''].find(x => tokens.length + x.length <= width) ?? ''
   return (
@@ -524,13 +527,13 @@ const windowSection = (ctx: Ctx, width: number, limit: number) => {
   }))
   const rest = used.slice(shown).reduce((a, x) => a + x.tokens, 0)
   const parts = rest > 0 ? [...named, { key: 'other', name: 'Other', value: rest, paint: P.stone }] : named
-  const full = `${fmtTokens(c.tokens)} / ${fmtTokens(c.window)} (${wholePct(c.pct)})`
-  const aside = 'Context window'.length + 2 + full.length <= width ? full : `${fmtTokens(c.tokens)} / ${fmtTokens(c.window)}`
+  const full = `${tok(ctx, c.tokens)} / ${tok(ctx, c.window)} (${wholePct(c.pct)})`
+  const aside = 'Context window'.length + 2 + full.length <= width ? full : `${tok(ctx, c.tokens)} / ${tok(ctx, c.window)}`
   return section(ctx, 'window', 'Context window', aside, width, limit, [
     bar(ctx, 'window-bar', parts, c.window, width, { height: 5, tick: c.tick, alt: 'What fills the context window' }),
-    ...parts.map(p => row(ctx, `w-${p.key}`, width, p.name, fmtTokens(p.value), { paint: p.paint, share: share(p.value, c.window) })),
-    hasReserve ? row(ctx, 'w-reserve', width, 'Compaction buffer', fmtTokens(reserve), { paint: BUFFER, share: share(reserve, c.window), isDim: true }) : null,
-    row(ctx, 'w-free', width, 'Free space', fmtTokens(free), { paint: TRACK, share: share(free, c.window), isDim: true }),
+    ...parts.map(p => row(ctx, `w-${p.key}`, width, p.name, tok(ctx, p.value), { paint: p.paint, share: share(p.value, c.window) })),
+    hasReserve ? row(ctx, 'w-reserve', width, 'Compaction buffer', tok(ctx, reserve), { paint: BUFFER, share: share(reserve, c.window), isDim: true }) : null,
+    row(ctx, 'w-free', width, 'Free space', tok(ctx, free), { paint: TRACK, share: share(free, c.window), isDim: true }),
   ])
 }
 
@@ -539,7 +542,7 @@ const tokenSection = (ctx: Ctx, width: number, limit: number) => {
   const all = sumTokens(t)
   return section(ctx, 'tokens', 'Tokens', `${fmtPct(cacheHitRate(t) * 100)} from cache`, width, limit, [
     bar(ctx, 'token-bar', KINDS.map(k => ({ key: k.key, value: t[k.key], paint: k.paint })), all, width, { height: 5, alt: 'Tokens by kind' }),
-    ...KINDS.map(k => row(ctx, `k-${k.key}`, width, k.label, fmtTokens(t[k.key]), { paint: k.paint, share: share(t[k.key], all) })),
+    ...KINDS.map(k => row(ctx, `k-${k.key}`, width, k.label, tok(ctx, t[k.key]), { paint: k.paint, share: share(t[k.key], all) })),
   ])
 }
 
@@ -579,7 +582,7 @@ const activitySection = (ctx: Ctx, width: number, limit: number) => {
           width,
           'Turn tokens',
           <Text>
-            {fmtTokens(sumTokens(turn.tokens))}
+            {tok(ctx, sumTokens(turn.tokens))}
             {turn.costUsd !== undefined ? <Text color={color(ctx, P.ember)}>{` · ${fmtUsd(turn.costUsd)}`}</Text> : null}
           </Text>,
         )
@@ -610,8 +613,8 @@ const summaryLine = (ctx: Ctx) => {
       <Text bold color={color(ctx, P.ember)}>
         {fmtUsd(m?.costUsd)}
       </Text>
-      {`   ${fmtTokens(sumTokens(ctx.usage.totals))} tok`}
-      {comp ? `   context ${wholePct(comp.pct)} of ${fmtTokens(comp.window)}` : m?.contextPercent !== undefined ? `   context ${fmtPct(m.contextPercent)}` : ''}
+      {`   ${tok(ctx, sumTokens(ctx.usage.totals))} tok`}
+      {comp ? `   context ${wholePct(comp.pct)} of ${tok(ctx, comp.window)}` : m?.contextPercent !== undefined ? `   context ${fmtPct(m.contextPercent)}` : ''}
       {(m?.rateLimits ?? []).map(l => `   ${rateLabel(l.kind)} ${wholePct(l.percentUsed)}`).join('')}
     </Text>
   )
@@ -624,10 +627,14 @@ export const band = (ctx: Ctx): RenderElement => {
   if (ctx.maxRows < 4) return <Box flexDirection="column">{summaryLine(ctx)}</Box>
 
   // The title and its blank line, then the meters; the details get the rows left.
-  const head = headRow(ctx, ctx.maxRows >= 5)
+  let head = headRow(ctx, ctx.maxRows >= 5)
+  // Asked for, the details always show: the meters give up their row beneath first,
+  // then the band runs taller than its rows and the engine scrolls it.
+  if (ctx.isExpanded && ctx.maxRows - 2 - head.rows < 5) head = headRow(ctx, false)
   const kept: RenderNode[] = [titleRow(ctx), head.node]
   let left = ctx.maxRows - 2 - head.rows
-  if (ctx.isExpanded && left >= 5) {
+  if (ctx.isExpanded) {
+    left = Math.max(left, 5)
     const inner = ctx.cols - SLACK
     // Three sections side by side where they have room for their rows, else two with Activity beneath.
     const isWide = Math.floor((inner - COL_GAP * 2) / 3) >= 26
@@ -668,14 +675,14 @@ const statusParts = (u: UsageModel, m: Measure | null, b: Breakdown | null, now:
     // Whole cents: a bill is never a fraction of one.
     { text: m?.costUsd === undefined ? '—' : `$${m.costUsd.toFixed(2)}` },
   ]
-  if (level < 4) parts.push({ text: `${fmtTokens(sumTokens(u.totals))} tokens` })
+  if (level < 4) parts.push({ text: `${fmtTokens(sumTokens(u.totals), true)} tokens` })
   const named = (full: string, short: string, pct: string) => `${level < 2 ? full : short}: ${pct}`
   const noted = (full: string | undefined, short: string | undefined) => (level >= 3 ? undefined : level === 0 ? full : short ?? full)
   // Against the same window as the band's Context window meter, once the breakdown has counted it.
   const c = compaction(m, b)
   if (c) {
-    const left = `${fmtTokens(c.left)} left`
-    parts.push({ text: named('Context window', 'Context', wholePct(c.pct)), note: noted(c.at ? `${fmtTokens(c.left)} until auto-compact` : left, left) })
+    const left = `${fmtTokens(c.left, true)} left`
+    parts.push({ text: named('Context window', 'Context', wholePct(c.pct)), note: noted(c.at ? `${fmtTokens(c.left, true)} until auto-compact` : left, left) })
   } else if (m?.contextPercent !== undefined) parts.push({ text: named('Context window', 'Context', fmtPct(m.contextPercent)) })
   for (const l of m?.rateLimits ?? []) {
     const [reset, span] = fmtReset(l.kind, l.resetsAt, now)

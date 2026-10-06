@@ -20,6 +20,8 @@ Choose **Show details** to see more:
 - **Tokens**: input, output, cache writes and cache reads for the whole chat, and how much was served from cache.
 - **Activity**: turns, tool calls, the most-used tools, and tokens for the current or last turn.
 
+The details are hidden until you choose Show details, in every new chat. When the band is short, as in a small fullscreen terminal, the sections list fewer rows, and the band scrolls if it still doesn't fit.
+
 The band appears in every chat as soon as it opens. It reads the chat's history, so a chat you come back to shows its full totals before you send anything.
 
 ### Matching the app's panel
@@ -28,7 +30,7 @@ The band's figures are meant to match the app's usage panel exactly:
 
 - **Context breakdown:** counted the way the panel counts it, not estimated. Counting exactly asks Anthropic's token-count service, so the band recounts when the chat opens, after each turn or compaction, and when you open the details; otherwise at most every 30 seconds, and only while the details are open.
 - **Percentages:** rounded to the nearest whole number.
-- **Token counts:** written as the app writes them: "134.5k", "33k", "62.4M".
+- **Token counts:** written as the app writes them on the desktop: "134.5k", "33k", "62.4M". The terminal always keeps one decimal place: "33.0k", "15.8k", "20.6M".
 
 ### Where the limits come from
 

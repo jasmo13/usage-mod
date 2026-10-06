@@ -197,6 +197,22 @@ test('a short band keeps the headline rows', async ($, on) => {
   await ui.unmount()
 })
 
+test('the details show when asked for, however few rows the band has', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: USAGE }))
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  await ui.press({ key: 'menu' })
+  await ui.press({ key: 'details' })
+  await ui.unmount()
+  // A fullscreen terminal gives the band what half its rows leave after the prompt.
+  for (const maxRows of [6, 7, 8, 9, 10]) {
+    const short = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: { ...BAND_PROPS, maxRows, bodyColumns: 85, scroll: { offset: 0, bodyRows: maxRows } } })
+    expect(await short.find({ text: /^Tokens$/ }), `${maxRows} rows: the token section`).toBeDefined()
+    expect(await short.find({ text: /Counted after the next reply|Free space/ }), `${maxRows} rows: the window section`).toBeDefined()
+    await short.unmount()
+  }
+})
+
 test('the context tile measures against compaction', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   const breakdown = {
@@ -231,7 +247,9 @@ test('the context tile measures against compaction', async ($, on) => {
     expect(await short.find({ text: /^Free space$/ }), `${surface}: details in 12 rows`).toBeDefined()
     expect(await short.find({ text: /^Cache read$/ }), `${surface}: token rows in 12 rows`).toBeDefined()
     expect(await short.find({ text: /^50%$/ }), `${surface}: context against its window`).toBeDefined()
-    expect(await short.find({ text: /30k until auto-compact/ }), `${surface}: tokens until compaction`).toBeDefined()
+    // One place always in the terminal; as the app writes it on the desktop.
+    const until = surface === 'terminal' ? /30\.0k until auto-compact/ : /30k until auto-compact/
+    expect(await short.find({ text: until }), `${surface}: tokens until compaction`).toBeDefined()
     if (surface === 'terminal') expect(await short.find({ text: /╋/ }), 'terminal: compaction tick').toBeDefined()
     await short.unmount()
   }
@@ -369,6 +387,12 @@ test('token counts read as the app writes them', () => {
   expect(fmtTokens(134_500)).toBe('134.5k')
   expect(fmtTokens(999_960)).toBe('1M')
   expect(fmtTokens(62_400_000)).toBe('62.4M')
+  // The terminal keeps the one place.
+  expect(fmtTokens(320, true)).toBe('320')
+  expect(fmtTokens(33_000, true)).toBe('33.0k')
+  expect(fmtTokens(15_800, true)).toBe('15.8k')
+  expect(fmtTokens(20_600_000, true)).toBe('20.6M')
+  expect(fmtTokens(999_960, true)).toBe('1.0M')
 })
 
 test('the context breakdown is counted exactly, as the app panel counts it', async ($, on) => {
