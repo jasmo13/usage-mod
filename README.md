@@ -4,28 +4,43 @@ A Claude Code plugin that shows a live usage band above the prompt. It works in 
 
 ## What it shows
 
-The top of the band has three meters, each an orange bar with its percentage:
+The top of the band has three meters, each an orange bar with its percentage. They're named and worded as in the app's usage panel:
 
-- **Context window**: how full this chat's context is.
-- **Session limit** and **Weekly · all models**: how much of your plan's 5-hour and weekly usage limits you've used. As in the app's panel, the session limit shows the time left until it resets, and the weekly limit shows the day and time it resets.
+| Meter | Shows | Example |
+| --- | --- | --- |
+| **Context window** | How full this chat's context is, and how much room is left before it's compacted | 75k until auto-compact · 64% |
+| **Session limit** | How much of your plan's 5-hour limit you've used, and the time left until it resets | Resets in 2 hr 37 min · 13% |
+| **Weekly · all models** | How much of your weekly limit you've used, and the day and time it resets, in your local time | Resets Wed 4:00 AM · 12% |
+
+Reset times are rounded to the nearest minute, as the app does. When the band is too narrow for the full wording beside a meter's name, the wording moves to a line under the bar, and on very narrow bands it shortens ("2 hr 37 min", "Weekly").
 
 Choose **Show details** to see more:
 
-- **Context window**: what's taking up the context (system prompt, tools, memory files, messages), plus the compaction buffer and free space.
+- **Context window**: what's taking up the context. The largest categories (messages, tools, MCP tools, skills, system prompt and so on) get their own rows, the rest are added together as Other, and the compaction buffer and free space follow. Each category has its own color on the desktop and in the terminal.
 - **Tokens**: input, output, cache writes and cache reads for the whole chat, and how much was served from cache.
 - **Activity**: turns, tool calls, the most-used tools, and tokens for the current or last turn.
 
 The band appears in every chat as soon as it opens. It reads the chat's history, so a chat you come back to shows its full totals before you send anything.
 
+### Matching the app's panel
+
+The band's figures are meant to match the app's usage panel exactly:
+
+- **Context breakdown:** counted the way the panel counts it, not estimated. Counting exactly asks Anthropic's token-count service, so the band recounts when the chat opens, after each turn or compaction, and when you open the details; otherwise at most every 30 seconds, and only while the details are open.
+- **Percentages:** rounded to the nearest whole number.
+- **Token counts:** written as the app writes them: "134.5k", "33k", "62.4M".
+
 ### Where the limits come from
 
-When you're signed in with a Claude account, the band asks Anthropic's usage service for your current limits. It does this every 15 seconds, and again about 5 seconds after each reply. Open chats share one answer, so having several open doesn't multiply the requests. The numbers match what the desktop app shows.
+When you're signed in with a Claude account, the band asks Anthropic's usage service for your current limits, the same figures the app shows. It does this every 15 seconds, and again about 5 seconds after each reply. Open chats share one answer, so having several open doesn't multiply the requests.
 
-If the usage service doesn't answer, the band falls back to the limits reported with Claude's replies. A new chat shows the last reading it saw until fresh numbers arrive.
+The limits also arrive with each of Claude's replies, and the band shows whichever reading is newest. If the usage service's last answer is more than a minute old and a reply has brought a newer reading since, the band shows the reply's. While the service isn't answering, the band asks less often: after 30 seconds, then a minute, and so on up to every 5 minutes.
+
+A new chat shows the last reading it saw until fresh numbers arrive. Without a Claude account login (for example, signed in with an API key or another token), there's no usage service to ask, and the limit meters show only what replies report, which may be nothing.
 
 ## Using it
 
-- **⋯** (or `m`) opens the band's menu:
+- **⋯** (or `m`) opens the band's menu. In the terminal the button reads **...**:
   - **Show details** / **Hide details** (`d`)
   - **Copy JSON** (`c`) copies everything the band knows about this chat.
   - **Hide band** (`h`)
@@ -35,7 +50,7 @@ If the usage service doesn't answer, the band falls back to the limits reported 
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Usage in the status line | Off | Also shows cost, tokens, context and limits in the status line. |
+| Usage in the status line | Off | Also shows cost, tokens, context and limits in the status line, for example `$1.84 · 182k tok · ctx 41% · Session 13% · Weekly 12%`. |
 
 ## Installing
 
@@ -101,7 +116,10 @@ npx -p typescript tsc -p .
 claude plugin validate .
 ```
 
-To release, bump `version` in `.claude-plugin/plugin.json` in the same pull request.
+In the same pull request:
+
+- Update this README whenever a change adds a feature or changes what the band shows or how it behaves.
+- To release, bump `version` in `.claude-plugin/plugin.json`.
 
 ## License
 
