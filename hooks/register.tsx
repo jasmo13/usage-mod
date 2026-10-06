@@ -127,13 +127,14 @@ const isReplyNewest = (now: number) => !fromService || (now - serviceAt > STALE_
  * session's own login (held by the engine; none for an API key or a
  * third-party provider, and then replies' readings stand).
  */
-const pollLimits = async ($: $, isAfterTurn = false) => {
+const pollLimits = async ($: $, isAfterTurn = false, isNow = false) => {
   const now = await $.clock.now()
-  if (now - polledAt < (isAfterTurn && pollGap === POLL_MS ? MIN_POLL_MS : pollGap)) return
+  // Asked for now (a copy): straight to the service, whatever the pace.
+  if (!isNow && now - polledAt < (isAfterTurn && pollGap === POLL_MS ? MIN_POLL_MS : pollGap)) return
   polledAt = now
   let rows: RateLimitRow[] | undefined
   let takenAt = now
-  if (!isAfterTurn) {
+  if (!isAfterTurn && !isNow) {
     const shared = (await $.store.get(SERVICE_KEY).catch(() => undefined)) as { at?: number; rateLimits?: RateLimitRow[] } | undefined
     if (shared?.at !== undefined && now - shared.at < SHARE_MS && Array.isArray(shared.rateLimits)) {
       rows = shared.rateLimits
@@ -170,9 +171,15 @@ let transcriptPath: string | undefined
 let breakdownAt = 0
 let isCounting = false
 let isOwed = false
+// The count running now, and the history being read, for a copy to wait on.
+let counting: Promise<void> | undefined
+let backfilling: Promise<void> | undefined
+// Whether a copy is checking everything before it copies.
+let isCopying = false
 // The refresh timer, and when it last fired: a draw that finds it stale starts it again.
 let ticker: { cancel: () => void } | undefined
 let tickedAt = 0
+let isTicking = false
 
 const refreshMeasure = async ($: $) => {
   const [u, now, prev] = await Promise.all([$.session.usage(), $.clock.now(), read($, measureA)])
@@ -204,6 +211,11 @@ const refreshBreakdown = async ($: $, isForced = false) => {
   if (!isForced && now - breakdownAt < BREAKDOWN_MS) return
   isCounting = true
   breakdownAt = now
+  counting = countBreakdown($, now)
+  await counting
+}
+
+const countBreakdown = async ($: $, now: number) => {
   try {
     let detail: 'summary' | 'full' = 'full'
     let u = await $.session.usage({ breakdown: 'full' }).catch(() => undefined)
@@ -233,6 +245,7 @@ const refreshBreakdown = async ($: $, isForced = false) => {
     $.ui.log(`usage-mod: context breakdown unavailable (${String(error)})`, { to: 'debug' })
   } finally {
     isCounting = false
+    counting = undefined
     if (isOwed) {
       isOwed = false
       void refreshBreakdown($, true)
@@ -246,7 +259,7 @@ const refreshBreakdown = async ($: $, isForced = false) => {
  */
 /**
  * The main loop's model, as `/model` shows it: read when the session starts, on a switch, and
- * every other tick, so a switch shows before the next reply rather than with it. The window
+ * every tick, so a switch shows before the next reply rather than with it. The window
  * and where compaction starts can change with the model (200k, 1M), so a new one counts the
  * context again, details shown or not: the Context window meter reads them too.
  */
@@ -265,7 +278,26 @@ const syncLive = async ($: $) => {
   if (await read($, expandedA)) await refreshBreakdown($)
 }
 
-/** How often the band redraws; cost, context and limits are read every other tick. */
+/**
+ * Everything the band shows, read again before a copy, each from where it comes: the model, cost and
+ * context, the limits from the usage service itself, the context counted exactly (after any count already
+ * running, which may predate the press), and the history, should it still be loading.
+ */
+const checkAll = async ($: $) => {
+  const asked = await $.clock.now()
+  await syncModel($).catch(() => undefined)
+  await refreshMeasure($).catch(() => undefined)
+  await pollLimits($, false, true).catch(() => undefined)
+  // Done once a count begun since the press has finished, whoever began it.
+  for (;;) {
+    while (counting) await counting
+    if (breakdownAt >= asked) break
+    await refreshBreakdown($, true)
+  }
+  await backfilling
+}
+
+/** How often the band redraws and reads cost, context, the model and the window (the limits keep their own pace). */
 const TICK_MS = 1000
 
 /**
@@ -285,24 +317,43 @@ const syncChoices = async ($: $) => {
 }
 
 /**
+ * The window and where compaction starts, by the quick local estimate: counted exactly again when
+ * either moved, however it was moved (/autocompact, a model or a setting changed where no hook hears it).
+ */
+const checkWindow = async ($: $) => {
+  if (isCounting) return
+  const b = (await $.session.usage({ breakdown: 'summary' }).catch(() => undefined))?.context.breakdown
+  const shown = await read($, breakdownA)
+  if (!b || !shown) return
+  const moved =
+    b.rawMaxTokens !== shown.rawMaxTokens || b.autoCompactThreshold !== shown.autoCompactThreshold || b.isAutoCompactEnabled !== shown.isAutoCompactEnabled
+  if (moved) await refreshBreakdown($, true)
+}
+
+/**
  * Keeps the band in step with the chat whether or not anything is happening
  * (durations, countdowns, cost and context all move between events). Replaces
  * any timer already running, so a new chat or a restart never runs two.
  */
 const startTicker = async ($: $) => {
   ticker?.cancel()
+  isTicking = false
   tickedAt = await $.clock.now()
-  let ticks = 0
   ticker = $.clock.every(TICK_MS, () => {
-    ticks += 1
+    // A tick still running when the next comes (a slow read) lets that one pass rather than pile up.
+    if (isTicking) return
+    isTicking = true
     void (async () => {
       tickedAt = await $.clock.now()
       await syncChoices($)
       // A hidden band with the status line off has nothing to keep fresh; the line alone still counts down.
       if ((await read($, hiddenA)) && !(await read($, statusA))) return
-      if (ticks % 2 === 0) await syncLive($)
+      await syncLive($)
+      await checkWindow($)
       $.ui.invalidate('ui.render')
-    })().catch(error => $.ui.log(`usage-mod: refresh failed (${String(error)})`, { to: 'debug' }))
+    })()
+      .catch(error => $.ui.log(`usage-mod: refresh failed (${String(error)})`, { to: 'debug' }))
+      .finally(() => (isTicking = false))
   })
 }
 
@@ -485,7 +536,7 @@ export const register: Register = on => {
     await refreshMeasure($).catch(() => undefined)
     // Work that may take a while runs off the session's start.
     $.clock.after(50, () => {
-      void backfill($).catch(error => $.ui.log(`usage-mod: history not loaded (${String(error)})`, { to: 'debug' }))
+      backfilling = backfill($).catch(error => $.ui.log(`usage-mod: history not loaded (${String(error)})`, { to: 'debug' }))
       void refreshBreakdown($, true)
     })
     await startTicker($)
@@ -517,6 +568,19 @@ export const register: Register = on => {
   on('classic.PostModelSwitch', ($, e, next) => {
     void syncModel($).catch(() => undefined)
     return next(e)
+  })
+  // Every slash command, once it has run: many move what the band shows (/model, /fast, /autocompact,
+  // /config, /compact, /clear, /mcp, /reload-plugins, /init, /output-style, /login), and new ones come
+  // with new releases, so the model, cost, context, its breakdown and the limits are all read again.
+  on('command.run', async ($, e, next) => {
+    const result = await next(e)
+    void (async () => {
+      await syncModel($)
+      await refreshMeasure($)
+      await pollLimits($, true)
+      await refreshBreakdown($, true)
+    })().catch(() => undefined)
+    return result
   })
   // A setting that moves the window or where compaction starts (auto-compact in /config, a settings
   // file edited): counted again once the change is in, so the meter follows it before the next reply.
@@ -706,6 +770,14 @@ export const register: Register = on => {
       },
       onCopy: async () => {
         await update($, menuA, () => false)
+        // A second press while the first is still checking copies nothing more.
+        if (isCopying) return
+        isCopying = true
+        try {
+          await checkAll($)
+        } finally {
+          isCopying = false
+        }
         const [u, m, b, running, model, now] = await Promise.all([
           read($, usageA),
           read($, measureA),
