@@ -102,3 +102,7 @@ claude plugin validate .
 ```
 
 To release, bump `version` in `.claude-plugin/plugin.json` in the same pull request.
+
+## License
+
+[MIT](LICENSE)
