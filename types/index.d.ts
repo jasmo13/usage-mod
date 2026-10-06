@@ -103,7 +103,7 @@ export type UsageModel = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'session-usage': {
+    'usage-mod': {
       usage: UsageModel
       measure: Measure | null
       breakdown: Breakdown | null
