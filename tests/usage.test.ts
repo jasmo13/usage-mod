@@ -1,7 +1,7 @@
 import type { RenderElement } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { cacheHitRate, emptyModel, foldTranscript, projectSlug, sumTokens } from '../hooks/collect'
+import { cacheHitRate, emptyModel, fmtTokens, foldTranscript, projectSlug, sumTokens } from '../hooks/collect'
 import { textBar } from '../hooks/views'
 
 const BAND_PROPS = {
@@ -108,14 +108,13 @@ test('live events fill the band on the terminal and the desktop', { options: { s
   await call
   await $.session.measure({ context: USAGE.context, rateLimits: USAGE.rateLimits, cost: USAGE.cost, changed: ['cost'] })
 
-  expect(statuses.at(-1)).toBe('$0.500 · 43k tok · ctx 25% · 5-hour 13%')
+  expect(statuses.at(-1)).toBe('$0.500 · 42.5k tok · ctx 25% · Session 13%')
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'session-usage', surface, component: 'AbovePrompt', props: BAND_PROPS })
     expect(await ui.find({ text: /\$0\.500/ }), `${surface}: cost`).toBeDefined()
-    expect(await ui.find({ text: /^43k$/ }), `${surface}: tokens`).toBeDefined()
-    expect(await ui.find({ text: /5-hour/ }), `${surface}: rate limit`).toBeDefined()
-    expect(await ui.find({ text: /cached/ }), `${surface}: cache`).toBeDefined()
+    expect(await ui.find({ text: /^42.5k$/ }), `${surface}: tokens`).toBeDefined()
+    expect(await ui.find({ text: /^Session limit$/ }), `${surface}: rate limit`).toBeDefined()
     const svgs = await ui.findAll({ type: 'Svg' })
     if (surface === 'desktop') {
       // Capsule meters drawn without a background, so they sit on the app's light or dark.
@@ -129,7 +128,7 @@ test('live events fill the band on the terminal and the desktop', { options: { s
 
     await ui.press({ key: 'menu' })
     expect(await ui.find({ text: /Copy JSON/ }), `${surface}: menu open`).toBeDefined()
-    expect(await ui.find({ text: /5-hour/ }), `${surface}: the menu covers no meter`).toBeDefined()
+    expect(await ui.find({ text: /^Session limit$/ }), `${surface}: the menu covers no meter`).toBeDefined()
     await ui.press({ key: 'details' })
     expect(await ui.find({ text: /Copy JSON/ }), `${surface}: menu closes after a choice`).toBeUndefined()
     expect(await ui.find({ text: /Read/ }), `${surface}: tools in details`).toBeDefined()
@@ -185,7 +184,7 @@ test('the context tile measures against compaction', async ($, on) => {
   await ui.press({ key: 'details' })
   expect(await ui.find({ text: /^Context window$/ })).toBeDefined()
   expect(await ui.find({ text: /^50%$/ }), '50k of the 100k compaction window').toBeDefined()
-  expect(await ui.find({ text: /30k left/ })).toBeDefined()
+  expect(await ui.find({ text: /30k until auto-compact/ }), 'worded as the app').toBeDefined()
   expect(await ui.find({ text: /50k \/ 100k \(50%\)/ }), 'the whole window in the details').toBeDefined()
   await ui.unmount()
 
@@ -195,7 +194,7 @@ test('the context tile measures against compaction', async ($, on) => {
     expect(await short.find({ text: /^Free space$/ }), `${surface}: details in 12 rows`).toBeDefined()
     expect(await short.find({ text: /^Cache read$/ }), `${surface}: token rows in 12 rows`).toBeDefined()
     expect(await short.find({ text: /^50%$/ }), `${surface}: context against its window`).toBeDefined()
-    expect(await short.find({ text: /30k left/ }), `${surface}: tokens until compaction`).toBeDefined()
+    expect(await short.find({ text: /30k until auto-compact/ }), `${surface}: tokens until compaction`).toBeDefined()
     if (surface === 'terminal') expect(await short.find({ text: /╋/ }), 'terminal: compaction tick').toBeDefined()
     await short.unmount()
   }
@@ -244,7 +243,7 @@ test('a chat whose transcript is over the read limit still loads its history', a
   expect(isTranscript(spawned[0]?.env?.SESSION_USAGE_FILE), 'the path rides the environment, unquoted').toBe(true)
 
   const ui = await $.ui.mount({ plugin: 'session-usage', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
-  expect(await ui.find({ text: /^43k$/ }), 'history tokens before any turn').toBeDefined()
+  expect(await ui.find({ text: /^42.5k$/ }), 'history tokens before any turn').toBeDefined()
   await ui.unmount()
 })
 
@@ -261,9 +260,9 @@ test('a new chat shows the last rate-limit reading until its first reply', async
   on('session.usage', () => ({ value: usage }))
   const ui = await $.ui.mount({ plugin: 'session-usage', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
   await clock.advance(2_000)
-  expect(await ui.find({ text: /5-hour/ }), 'kept reading').toBeDefined()
+  expect(await ui.find({ text: /^Session limit$/ }), 'kept reading').toBeDefined()
   expect(await ui.find({ text: /^40%$/ }), 'its figure').toBeDefined()
-  expect(await ui.find({ text: /7-day/ }), 'a reset window is dropped').toBeUndefined()
+  expect(await ui.find({ text: /^Weekly/ }), 'a reset window is dropped').toBeUndefined()
   // The first reply's own reading takes over.
   usage = { ...USAGE, rateLimits: [{ kind: 'five_hour', percentUsed: 55, resetsAt: '2030-01-01T00:00:00Z' }] }
   await clock.advance(2_000)
@@ -309,6 +308,12 @@ test('the limit meters follow the usage service over the last reply', async ($, 
   expect(asked[0]?.auth, 'the login is the engine’s handle').toBe('h1')
   expect(await ui.find({ text: /^10%$/ }), '5-hour from the service').toBeDefined()
   expect(await ui.find({ text: /^12%$/ }), '7-day from the service').toBeDefined()
+  // Named and timed as the app's panel does: time left for the session, the local day and hour for the week.
+  expect(await ui.find({ text: /^Session limit$/ })).toBeDefined()
+  expect(await ui.find({ text: /^Resets in 59 min$/ }), 'session reset').toBeDefined()
+  expect(await ui.find({ text: /^Weekly · all models$/ })).toBeDefined()
+  const weekly = new Date('2030-01-05T00:00:00Z').toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+  expect(await ui.find({ text: `Resets ${weekly}` }), 'weekly reset').toBeDefined()
   // A reading of the reply does not pull it back.
   await clock.advance(2_000)
   expect(await ui.find({ text: /^9%$/ })).toBeUndefined()
@@ -317,5 +322,69 @@ test('the limit meters follow the usage service over the last reply', async ($, 
   expect(asked).toHaveLength(1)
   await clock.advance(10_000)
   expect(asked).toHaveLength(2)
+  await ui.unmount()
+})
+
+test('token counts read as the app writes them', () => {
+  expect(fmtTokens(320)).toBe('320')
+  expect(fmtTokens(33_000)).toBe('33k')
+  expect(fmtTokens(134_500)).toBe('134.5k')
+  expect(fmtTokens(999_960)).toBe('1M')
+  expect(fmtTokens(62_400_000)).toBe('62.4M')
+})
+
+test('the context breakdown is counted exactly, as the app panel counts it', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  const breakdown = {
+    model: 'claude-opus-5-5',
+    totalTokens: 50_000,
+    rawMaxTokens: 100_000,
+    percentage: 50,
+    autoCompactThreshold: 80_000,
+    isAutoCompactEnabled: true,
+    categories: [{ name: 'Messages', tokens: 40_000, color: 'x', kind: 'used' }],
+    memoryFiles: [],
+    mcpTools: [],
+  }
+  const asked: (string | undefined)[] = []
+  on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
+  on('session.usage', (_$, e) => {
+    asked.push(e.breakdown)
+    return { value: { ...USAGE, context: { ...USAGE.context, breakdown } } as never }
+  })
+  const ui = await $.ui.mount({ plugin: 'session-usage', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  await ui.press({ key: 'menu' })
+  await ui.press({ key: 'details' })
+  expect(asked).toContain('full')
+  expect(asked).not.toContain('summary')
+  await ui.unmount()
+})
+
+test('a stale service reading gives way to a newer reply', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.parse('2029-12-31T23:00:00Z') })
+  let reply = 9
+  on('session.usage', () => ({ value: { ...USAGE, rateLimits: [{ kind: 'five_hour', percentUsed: reply, resetsAt: '2030-01-01T00:00:00Z' }] } }))
+  on('store.get', () => ({ value: undefined }))
+  on('store.set', () => ({ value: undefined }))
+  on('session.authorize', () => ({ value: { handle: 'h1', kind: 'bearer' as const } }))
+  let isUp = true
+  let asks = 0
+  on('http.fetch', () => {
+    asks += 1
+    const body = { five_hour: { utilization: 10, resets_at: '2030-01-01T00:00:00+00:00' } }
+    return { value: isUp ? { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } : { status: 429, ok: false, headers: {}, text: '' } }
+  })
+  const ui = await $.ui.mount({ plugin: 'session-usage', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  await clock.advance(2_000)
+  expect(await ui.find({ text: /^10%$/ }), 'from the service').toBeDefined()
+  // The service stops answering, and a reply reads higher since.
+  isUp = false
+  reply = 11
+  await clock.advance(20_000)
+  expect(await ui.find({ text: /^10%$/ }), 'the service reading stands while it is fresh').toBeDefined()
+  await clock.advance(50_000)
+  expect(await ui.find({ text: /^11%$/ }), 'the newer reply once the service reading is stale').toBeDefined()
+  // Asked at 2s, then 15s later, then 30s after that: it backs off while the service is down.
+  expect(asks).toBe(3)
   await ui.unmount()
 })

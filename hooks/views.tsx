@@ -35,9 +35,10 @@ export type Ctx = {
 /* ---------- palette ---------- */
 
 /**
- * A color in both forms: `hex` for the desktop's vectors and swatches, mid-tones
- * that read on the app's light and dark backgrounds alike; `key` for the
- * terminal, a theme key its light or dark theme resolves.
+ * A color in both forms: `hex`, mid-tones that read on light and dark
+ * backgrounds alike, drawn on every surface so each category keeps a color of
+ * its own (the terminal's theme has too few keys, and they repeat); `key`, a
+ * theme key, for the translucent track and buffer the terminal cannot draw.
  */
 type Paint = { hex: string; key: string }
 
@@ -78,7 +79,7 @@ const CATEGORY: Record<string, { name: string; paint: Paint }> = {
 }
 const SPARE = [P.rose, P.teal, P.slate, P.sage, P.ochre]
 
-const color = (ctx: Ctx, p: Paint) => (ctx.Svg ? p.hex : p.key)
+const color = (ctx: Ctx, p: Paint) => (ctx.Svg || p.hex.startsWith('#') ? p.hex : p.key)
 
 /* ---------- layout ---------- */
 
@@ -101,16 +102,30 @@ export const textBar = (frac: number, width: number) => {
   return { filled, rest: '░'.repeat(Math.max(0, width - [...filled].length)) }
 }
 
-/** "resets in 3h 05m", or "3h 05m left" where room is short. */
-const fmtLeft = (iso: string | undefined, now: number, isLong: boolean) => {
-  if (!iso) return undefined
-  const ms = Date.parse(iso) - now
-  if (!Number.isFinite(ms)) return undefined
-  if (ms <= 0) return 'resetting'
-  const m = Math.ceil(ms / 60_000)
-  const h = Math.floor(m / 60)
-  const span = m < 60 ? `${m}m` : h < 24 ? `${h}h ${`${m % 60}`.padStart(2, '0')}m` : `${Math.floor(h / 24)}d ${h % 24}h`
-  return isLong ? `resets in ${span}` : `${span} left`
+/**
+ * When a limit resets, as the app's panel writes it, longest first for the row
+ * to pick from: the time left for the session limit ("Resets in 2 hr 37 min"),
+ * the local day and time for the weekly ones ("Resets Wed 4:00 AM").
+ */
+const fmtReset = (kind: string, iso: string | undefined, now: number): string[] => {
+  const at = iso === undefined ? NaN : Date.parse(iso)
+  if (!Number.isFinite(at)) return []
+  if (at <= now) return ['Resetting']
+  if (kind === 'five_hour') {
+    const mins = Math.max(1, Math.floor((at - now) / 60_000))
+    const h = Math.floor(mins / 60)
+    const m = mins % 60
+    const span = h === 0 ? `${m} min` : m === 0 ? `${h} hr` : `${h} hr ${m} min`
+    return [`Resets in ${span}`, span, h === 0 ? `${m}m` : `${h}h ${`${m}`.padStart(2, '0')}m`]
+  }
+  const when = new Date(at).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+  return [`Resets ${when}`, when]
+}
+
+/** Each limit's name as the app's panel gives it, then shorter ones for tight rows. */
+const LIMIT_NAMES: Record<string, string[]> = {
+  five_hour: ['Session limit', 'Session', '5h'],
+  seven_day: ['Weekly · all models', 'Weekly', '7d'],
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
@@ -201,7 +216,7 @@ const bar = (
   }
   // The terminal: one glyph per cell in its segment's theme color, the tick as a taller mark.
   const glyphs: { ch: string; color: string }[] = []
-  for (const c of allot(segments, total, cells)) for (let i = 0; i < c.n; i++) glyphs.push({ ch: '━', color: c.paint.key })
+  for (const c of allot(segments, total, cells)) for (let i = 0; i < c.n; i++) glyphs.push({ ch: '━', color: color(ctx, c.paint) })
   while (glyphs.length < cells) glyphs.push({ ch: '━', color: TRACK.key })
   glyphs.length = cells
   if (opts.tick !== undefined && opts.tick > 0 && opts.tick < 1) glyphs[Math.min(cells - 1, Math.round(opts.tick * cells))] = { ch: '╋', color: 'inactive' }
@@ -301,33 +316,43 @@ type Meter = {
   alt: string
 }
 
+const fitsBeside = (label: string, detail: string, pct: string, width: number) =>
+  label.length + (detail ? detail.length + 2 : 0) + pct.length + 2 <= width
+
+/** Whether the meter's full name and detail sit side by side at `width`, as on the app's panel. */
+const fitsInline = (m: Meter, width: number) => fitsBeside(m.labels[0] ?? '', m.details[0] ?? '', wholePct(m.pct), width)
+
 /**
- * The longest label and detail pair that fits `width`: a readable name first,
- * then the detail; the last-resort label ("5h") only when nothing else fits.
+ * The longest label and detail that fit `width`. Beside each other: a readable
+ * name first, then the detail; the last-resort label ("5h") only when nothing
+ * else fits. With the detail on a line of its own: each the longest that fits.
  */
-const fit = (m: Meter, width: number) => {
+const fit = (m: Meter, width: number, isBelow: boolean) => {
   const pct = wholePct(m.pct)
-  const fits = (label: string, detail: string) => label.length + (detail ? detail.length + 2 : 0) + pct.length + 2 <= width
   const names = m.labels.length > 1 ? m.labels.slice(0, -1) : m.labels
   const tiny = m.labels.length > 1 ? m.labels.slice(-1) : []
+  if (isBelow) {
+    const label = [...names, ...tiny].find(l => fitsBeside(l, '', pct, width)) ?? m.labels.at(-1) ?? ''
+    return { label, detail: m.details.find(d => d.length <= width) ?? '', pct }
+  }
   const tries = [names, tiny].flatMap(group => [
     ...group.flatMap(label => m.details.map(detail => ({ label, detail }))),
     ...group.map(label => ({ label, detail: '' })),
   ])
-  const chosen = tries.find(t => fits(t.label, t.detail)) ?? { label: m.labels.at(-1) ?? '', detail: '' }
+  const chosen = tries.find(t => fitsBeside(t.label, t.detail, pct, width)) ?? { label: m.labels.at(-1) ?? '', detail: '' }
   return { ...chosen, pct }
 }
 
-const meter = (ctx: Ctx, m: Meter, width: number) => {
+const meter = (ctx: Ctx, m: Meter, width: number, isBelow: boolean) => {
   const { Box, Text } = ctx.T
-  const { label, detail, pct } = fit(m, width)
+  const { label, detail, pct } = fit(m, width, isBelow)
   const p = m.pct ?? 0
   return (
     <Box key={m.key} flexDirection="column" width={width} flexShrink={0}>
       <Box flexDirection="row" justifyContent="space-between" columnGap={1}>
         <Text wrap="truncate">{label}</Text>
         <Text>
-          <Text dimColor>{detail ? `${detail}  ` : ''}</Text>
+          <Text dimColor>{detail && !isBelow ? `${detail}  ` : ''}</Text>
           <Text bold>
             {pct}
           </Text>
@@ -338,6 +363,11 @@ const meter = (ctx: Ctx, m: Meter, width: number) => {
         tick: m.tick,
         alt: m.alt,
       })}
+      {isBelow && detail ? (
+        <Text dimColor wrap="truncate">
+          {detail}
+        </Text>
+      ) : null}
     </Box>
   )
 }
@@ -350,7 +380,7 @@ const meters = (ctx: Ctx): Meter[] => {
       ? {
           key: 'context',
           labels: ['Context window', 'Context'],
-          details: [`${fmtTokens(c.left)} left`, fmtTokens(c.left)],
+          details: c.at ? [`${fmtTokens(c.left)} until auto-compact`, `${fmtTokens(c.left)} left`, fmtTokens(c.left)] : [`${fmtTokens(c.left)} left`, fmtTokens(c.left)],
           pct: c.pct,
           tick: c.tick,
           alt: `Context ${wholePct(c.pct)} of ${fmtTokens(c.window)}, ${fmtTokens(c.left)} tokens ${c.at ? 'until compaction' : 'left'}`,
@@ -365,13 +395,13 @@ const meters = (ctx: Ctx): Meter[] => {
         },
   ]
   for (const l of m?.rateLimits ?? []) {
-    const name = rateLabel(l.kind)
+    const labels = LIMIT_NAMES[l.kind] ?? [`${rateLabel(l.kind)} limit`, rateLabel(l.kind)]
     out.push({
       key: `rl-${l.kind}`,
-      labels: [`${name} limit`, name, name.replace(/^(\d+)-(\w).*/, '$1$2')],
-      details: [fmtLeft(l.resetsAt, ctx.now, true), fmtLeft(l.resetsAt, ctx.now, false)].filter((d): d is string => d !== undefined),
+      labels,
+      details: fmtReset(l.kind, l.resetsAt, ctx.now),
       pct: l.percentUsed,
-      alt: `${name} limit ${l.percentUsed}% used`,
+      alt: `${labels[0]} ${wholePct(l.percentUsed)} used`,
     })
   }
   return out
@@ -428,31 +458,41 @@ const titleRow = (ctx: Ctx) => {
         {ctx.isMenuOpen
           ? menuOptions(ctx).map(o => <Button key={o.key} label={o.label} hotkey={o.hotkey} onPress={() => o.onPress()} />)
           : null}
-        <Button key="menu" label="⋯" hotkey="m" variant={ctx.isMenuOpen ? 'primary' : undefined} onPress={() => ctx.onMenu()} />
+        {/* "⋯" is drawn one column wide by some terminals and laid out as two, which leaves a gap: plain dots there. */}
+        <Button key="menu" label={ctx.Svg ? '⋯' : '...'} hotkey="m" variant={ctx.isMenuOpen ? 'primary' : undefined} onPress={() => ctx.onMenu()} />
       </Box>
     </Box>
   )
 }
 
-/** The session, then the meters sharing the rest of the width. */
-const headRow = (ctx: Ctx) => {
+/**
+ * The session, then the meters sharing the rest of the width. Where a meter's
+ * full name and detail ("Session limit", "Resets in 2 hr 37 min") will not sit
+ * side by side, every meter takes its detail onto a line under its bar, given
+ * the row to spare: the rows the head takes are returned with it.
+ */
+const headRow = (ctx: Ctx, canGrow: boolean) => {
   const { Box } = ctx.T
   const all = meters(ctx)
   const width = Math.max(10, Math.min(40, Math.floor((ctx.cols - SLACK - SESSION_W - GAP * all.length) / all.length)))
-  return (
-    <Box key="head" flexDirection="row" columnGap={GAP}>
-      {sessionBlock(ctx, SESSION_W)}
-      {all.map(m => meter(ctx, m, width))}
-    </Box>
-  )
+  const isBelow = canGrow && all.some(m => m.details.length > 0 && !fitsInline(m, width))
+  return {
+    rows: isBelow ? 3 : 2,
+    node: (
+      <Box key="head" flexDirection="row" columnGap={GAP}>
+        {sessionBlock(ctx, SESSION_W)}
+        {all.map(m => meter(ctx, m, width, isBelow))}
+      </Box>
+    ),
+  }
 }
 
 /* ---------- the detail: shown with Show details ---------- */
 
 /**
  * What fills the window: the largest categories named, the rest as Other, the
- * compaction reserve and what is free. Where rows are short the reserve goes
- * first, then the smaller categories fold into Other.
+ * compaction reserve and what is free. Where rows are short the smaller
+ * categories fold into Other first, then the reserve goes, then more fold.
  */
 const windowSection = (ctx: Ctx, width: number, limit: number) => {
   const b = ctx.breakdown
@@ -465,6 +505,7 @@ const windowSection = (ctx: Ctx, width: number, limit: number) => {
   let shown = Math.min(4, used.length)
   let hasReserve = reserve > 0
   const need = () => shown + (used.length > shown ? 1 : 0) + (hasReserve ? 1 : 0) + 1
+  while (need() > room && shown > 2) shown -= 1
   if (need() > room) hasReserve = false
   while (need() > room && shown > 1) shown -= 1
   const named = used.slice(0, shown).map((x, i) => ({
@@ -563,7 +604,7 @@ const summaryLine = (ctx: Ctx) => {
       </Text>
       {`   ${fmtTokens(sumTokens(ctx.usage.totals))} tok`}
       {comp ? `   context ${wholePct(comp.pct)} of ${fmtTokens(comp.window)}` : m?.contextPercent !== undefined ? `   context ${fmtPct(m.contextPercent)}` : ''}
-      {(m?.rateLimits ?? []).map(l => `   ${rateLabel(l.kind)} ${fmtPct(l.percentUsed)}`).join('')}
+      {(m?.rateLimits ?? []).map(l => `   ${rateLabel(l.kind)} ${wholePct(l.percentUsed)}`).join('')}
     </Text>
   )
 }
@@ -575,8 +616,9 @@ export const band = (ctx: Ctx): RenderElement => {
   if (ctx.maxRows < 4) return <Box flexDirection="column">{summaryLine(ctx)}</Box>
 
   // The title and its blank line, then the meters; the details get the rows left.
-  const kept: RenderNode[] = [titleRow(ctx), headRow(ctx)]
-  let left = ctx.maxRows - 4
+  const head = headRow(ctx, ctx.maxRows >= 5)
+  const kept: RenderNode[] = [titleRow(ctx), head.node]
+  let left = ctx.maxRows - 2 - head.rows
   if (ctx.isExpanded && left >= 5) {
     const inner = ctx.cols - SLACK
     // Three sections side by side where they have room for their rows, else two with Activity beneath.
@@ -611,6 +653,6 @@ export const band = (ctx: Ctx): RenderElement => {
 export const statusText = (u: UsageModel, m: Measure | null) => {
   const parts = [fmtUsd(m?.costUsd), `${fmtTokens(sumTokens(u.totals))} tok`]
   if (m?.contextPercent !== undefined) parts.push(`ctx ${fmtPct(m.contextPercent)}`)
-  for (const l of m?.rateLimits ?? []) parts.push(`${rateLabel(l.kind)} ${fmtPct(l.percentUsed)}`)
+  for (const l of m?.rateLimits ?? []) parts.push(`${rateLabel(l.kind)} ${wholePct(l.percentUsed)}`)
   return parts.join(' · ')
 }
