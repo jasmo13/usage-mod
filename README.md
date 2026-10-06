@@ -88,6 +88,16 @@ claude plugin marketplace update <marketplace>
 claude plugin update usage-mod@<marketplace>
 ```
 
+From the `jakes-place` marketplace, that's:
+
+```bash
+claude plugin marketplace update jakes-place
+```
+
+```bash
+claude plugin update usage-mod@jakes-place
+```
+
 Then reopen your chats or restart the app.
 
 ## Developing
