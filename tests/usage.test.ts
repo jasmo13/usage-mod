@@ -254,7 +254,7 @@ test('the context tile measures against compaction', async ($, on) => {
 })
 
 // A chat that opens with what earlier chats chose, kept in the plugin's store.
-const startWith = async (...[$, on, chosen]: [...Parameters<TestBody>, Record<string, unknown>]) => {
+const startWith = async (...[$, on, chosen, usage = () => USAGE]: [...Parameters<TestBody>, Record<string, unknown>, (() => unknown)?]) => {
   const clock = mock.clock(on, { now: 1_000 })
   on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
   const stored = new Map(Object.entries(chosen))
@@ -264,7 +264,7 @@ const startWith = async (...[$, on, chosen]: [...Parameters<TestBody>, Record<st
     return { value: undefined }
   })
   on('ui.toast', () => ({ value: undefined }))
-  on('session.usage', () => ({ value: USAGE }))
+  on('session.usage', () => ({ value: usage() as never }))
   on('session.id', () => ({ value: 'later' }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
@@ -668,4 +668,63 @@ test("the Copy JSON button copies the band's figures, the same on the desktop an
   expect(json.measure.rateLimits[0].limit).toBe('sessionLimit')
   expect(json.turns, 'the raw data stays').toBeDefined()
   expect(await copy('desktop'), 'the desktop copies the same').toEqual(json)
+})
+
+test('the band names a model as soon as it is switched to, before its first reply', async ($, on) => {
+  let model = 'claude-opus-5-5'
+  on('session.model', () => ({ value: model }))
+  on('classic.PostModelSwitch', () => ({}))
+  const { clock } = await startWith($, on, {})
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await ui.find({ text: /Opus 5\.5/ }), 'the model the chat started on').toBeDefined()
+  // /model or the picker.
+  model = 'claude-sonnet-5-5'
+  await $.classic.PostModelSwitch({
+    from_model: 'claude-opus-5-5',
+    to_model: model,
+    requested_model: 'sonnet',
+    source: 'command',
+    context_tokens: 0,
+    prompt_cache_warm: false,
+    cache_ttl: '5m',
+    estimated_cache_write_usd: 0,
+    pricing: 'catalog',
+  } as never)
+  expect(await ui.find({ text: /Sonnet 5\.5/ }), 'the switch, at once').toBeDefined()
+  // A switch no hook heard (another surface, say) shows within a couple of ticks.
+  model = 'claude-opus-5-5'
+  await clock.advance(2_000)
+  expect(await ui.find({ text: /Opus 5\.5/ }), 'and back, on the tick').toBeDefined()
+  await ui.unmount()
+})
+
+test('a smaller window or a new auto-compact setting moves the meter at once, details hidden', async ($, on) => {
+  let model = 'claude-opus-5-5'
+  let breakdown = {
+    model, totalTokens: 50_000, rawMaxTokens: 200_000, percentage: 25, autoCompactThreshold: 167_000, isAutoCompactEnabled: true,
+    categories: [{ name: 'Messages', tokens: 50_000, color: 'x', kind: 'used' }], memoryFiles: [], mcpTools: [],
+  }
+  on('session.model', () => ({ value: model }))
+  on('classic.PostModelSwitch', () => ({}))
+  on('config.set', (_$, e) => ({ value: e.value }))
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  const { clock } = await startWith($, on, {}, () => ({ ...USAGE, context: { ...USAGE.context, breakdown } }))
+  await $.session.measure({ context: USAGE.context, rateLimits: USAGE.rateLimits, cost: USAGE.cost, changed: ['context'] })
+  await clock.advance(100)
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await ui.find({ text: /^Cache read$/ }), 'details hidden').toBeUndefined()
+  expect(await ui.find({ text: /^25%$/ }), '50k of 200k').toBeDefined()
+  // A model with a 100k window, compacting at 80k.
+  model = 'claude-haiku-4-5'
+  breakdown = { ...breakdown, model, rawMaxTokens: 100_000, percentage: 50, autoCompactThreshold: 80_000 }
+  await $.classic.PostModelSwitch({ from_model: 'claude-opus-5-5', to_model: model, requested_model: 'haiku', source: 'command', context_tokens: 0, prompt_cache_warm: false, cache_ttl: '5m', estimated_cache_write_usd: 0, pricing: 'catalog' } as never)
+  await clock.advance(100)
+  expect(await ui.find({ text: /^50%$/ }), 'against the new window').toBeDefined()
+  expect(await ui.find({ text: /30k until auto-compact/ }), 'and where it compacts').toBeDefined()
+  // Auto-compact turned off in /config.
+  breakdown = { ...breakdown, isAutoCompactEnabled: false }
+  await $.config.set({ key: 'autoCompact', value: false } as never)
+  await clock.advance(100)
+  expect(await ui.find({ text: /50k left/ }), 'no compaction point, counted to the window').toBeDefined()
+  await ui.unmount()
 })
