@@ -1,6 +1,6 @@
 import type { RenderElement } from 'claude-code'
 import type { Breakdown, Measure } from '../types'
-import { expect, mock, test } from 'claude-code/testing'
+import { expect, mock, test, type TestBody } from 'claude-code/testing'
 
 import { cacheHitRate, emptyModel, fmtMs, fmtTokens, fmtUsd, foldTranscript, projectSlug, sumTokens } from '../hooks/collect'
 import { statusText, textBar } from '../hooks/views'
@@ -238,7 +238,7 @@ test('the context tile measures against compaction', async ($, on) => {
   expect(await ui.find({ text: /^Context window$/ })).toBeDefined()
   expect(await ui.find({ text: /^50%$/ }), '50k of the 100k compaction window').toBeDefined()
   expect(await ui.find({ text: /30k until auto-compact/ }), 'worded as the app').toBeDefined()
-  expect(await ui.find({ text: /50k \/ 100k \(50%\)/ }), 'the whole window in the details').toBeDefined()
+  expect(await ui.find({ text: /^50k \/ 100k$/ }), 'the whole window in the details, its percentage left to the meter').toBeDefined()
   await ui.unmount()
 
   // A band of 12 rows still shows the details, with fewer rows in each, on either surface.
@@ -251,6 +251,37 @@ test('the context tile measures against compaction', async ($, on) => {
     if (surface === 'terminal') expect(await short.find({ text: /╋/ }), 'terminal: compaction tick').toBeDefined()
     await short.unmount()
   }
+})
+
+// A session whose transcript is nowhere: a new chat writes its first with its first message.
+const noTranscript = async (...[$, on]: Parameters<TestBody>) => {
+  const clock = mock.clock(on, { now: Date.parse('2027-01-01T00:00:00Z') })
+  on('session.id', () => ({ value: 'no-transcript' }))
+  on('session.root', () => ({ value: '/proj' }))
+  on('session.cwd', () => ({ value: '/proj' }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  on('env.get', () => ({ value: undefined }))
+  on('fs.exists', () => ({ value: false }))
+  on('fs.list', () => ({ value: [] }))
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await clock.advance(100)
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  await ui.press({ key: 'menu' })
+  await ui.press({ key: 'details' })
+  const note = await ui.find({ text: /^History: transcript not found/ })
+  await ui.unmount()
+  return note
+}
+
+test('a new chat has no history to miss', async ($, on) => {
+  on('session.usage', () => ({ value: { ...USAGE, cost: { usd: 0 } } }))
+  expect(await noTranscript($, on)).toBeUndefined()
+})
+
+test('a chat that has spent with no transcript to read says so', async ($, on) => {
+  on('session.usage', () => ({ value: USAGE }))
+  expect(await noTranscript($, on)).toBeDefined()
 })
 
 test('a chat whose transcript is over the read limit still loads its history', async ($, on) => {

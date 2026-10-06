@@ -354,6 +354,9 @@ const backfill = async ($: $) => {
   await set({ status: 'pending', sessionId, liveSince, version: BACKFILL_VERSION })
   const path = await findTranscript($, sessionId)
   if (!path) {
+    // A new chat has no transcript until its first message, and nothing before the mod to count.
+    const m = (await read($, measureA)) as Measure | null
+    if (!m?.costUsd) return void (await set({ status: 'done', sessionId, liveSince, version: BACKFILL_VERSION }))
     await set({ status: 'unavailable', sessionId, liveSince, version: BACKFILL_VERSION, note: 'History: transcript not found; counting from when the mod loaded.' })
     return
   }
