@@ -1,8 +1,9 @@
 import type { RenderElement } from 'claude-code'
+import type { Breakdown, Measure } from '../types'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { cacheHitRate, emptyModel, fmtTokens, foldTranscript, projectSlug, sumTokens } from '../hooks/collect'
-import { textBar } from '../hooks/views'
+import { statusText, textBar } from '../hooks/views'
 
 const BAND_PROPS = {
   hasSurvey: false,
@@ -406,4 +407,12 @@ test('a stale service reading gives way to a newer reply', async ($, on) => {
   // Asked at 2s, then 15s later, then 30s after that: it backs off while the service is down.
   expect(asks).toBe(3)
   await ui.unmount()
+})
+
+test('the status line measures context against the same window as the band', async () => {
+  const measure = { at: 0, costUsd: 0.256, contextTokens: 61_078, contextPercent: 6.1, rateLimits: [] } as unknown as Measure
+  const breakdown = { at: 0, detail: 'full', model: 'claude-opus-5-5', totalTokens: 61_078, rawMaxTokens: 300_000, percentage: 20, autoCompactThreshold: 267_000, isAutoCompactEnabled: true, categories: [], memoryFiles: [], mcpTools: [], skills: [] } as Breakdown
+  // The band's Context window meter reads 20% of 300k; the status line said "ctx 6.0%" against a larger window.
+  expect(statusText(emptyModel(), measure, breakdown)).toContain('ctx 20%')
+  expect(statusText(emptyModel(), measure, null), 'before the breakdown is counted').toContain('ctx 6.1%')
 })
