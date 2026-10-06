@@ -88,8 +88,16 @@ const color = (ctx: Ctx, p: Paint) => (ctx.Svg || p.hex.startsWith('#') ? p.hex 
 /* ---------- layout ---------- */
 
 const GAP = 3
-/** Cells kept free so a font a little wider than the estimate never wraps a tile. */
-const SLACK = 4
+/**
+ * `total` cells shared by `n` columns with `gap` between them, every cell used:
+ * the cells a share leaves over go one each to the last columns, so the band runs to its right edge.
+ */
+const split = (total: number, n: number, gap: number, least: number) => {
+  const room = total - gap * (n - 1)
+  const each = Math.max(least, Math.floor(room / n))
+  const over = Math.max(0, room - each * n)
+  return Array.from({ length: n }, (_, i) => each + (i >= n - over ? 1 : 0))
+}
 /** Desktop CSS pixels per terminal cell, for sizing a vector to its column. */
 const PX = 8
 
@@ -482,14 +490,14 @@ const titleRow = (ctx: Ctx) => {
 const headRow = (ctx: Ctx, canGrow: boolean) => {
   const { Box } = ctx.T
   const all = meters(ctx)
-  const width = Math.max(10, Math.min(40, Math.floor((ctx.cols - SLACK - SESSION_W - GAP * all.length) / all.length)))
-  const isBelow = canGrow && all.some(m => m.details.length > 0 && !fitsInline(m, width))
+  const widths = split(ctx.cols - SESSION_W - GAP, all.length, GAP, 10)
+  const isBelow = canGrow && all.some((m, i) => m.details.length > 0 && !fitsInline(m, widths[i]!))
   return {
     rows: isBelow ? 3 : 2,
     node: (
       <Box key="head" flexDirection="row" columnGap={GAP}>
         {sessionBlock(ctx, SESSION_W)}
-        {all.map(m => meter(ctx, m, width, isBelow))}
+        {all.map((m, i) => meter(ctx, m, widths[i]!, isBelow))}
       </Box>
     ),
   }
@@ -631,14 +639,13 @@ export const band = (ctx: Ctx): RenderElement => {
   let left = ctx.maxRows - 2 - head.rows
   if (ctx.isExpanded) {
     left = Math.max(left, 5)
-    const inner = ctx.cols - SLACK
+    const inner = ctx.cols
     // Three sections side by side where they have room for their rows, else two with Activity beneath.
     const isWide = Math.floor((inner - COL_GAP * 2) / 3) >= 26
-    const n = isWide ? 3 : 2
-    const colW = Math.max(24, Math.min(48, Math.floor((inner - COL_GAP * (n - 1)) / n)))
+    const colW = split(inner, isWide ? 3 : 2, COL_GAP, 24)
     const limit = Math.min(9, left - 1)
-    const sections = [windowSection(ctx, colW, limit), tokenSection(ctx, colW, limit)]
-    if (isWide) sections.push(activitySection(ctx, colW, limit))
+    const sections = [windowSection(ctx, colW[0]!, limit), tokenSection(ctx, colW[1]!, limit)]
+    if (isWide) sections.push(activitySection(ctx, colW[2]!, limit))
     kept.push(
       <Box key="sections" flexDirection="row" columnGap={COL_GAP} marginTop={1}>
         {sections}
@@ -649,7 +656,7 @@ export const band = (ctx: Ctx): RenderElement => {
       const below = Math.min(8, left - 1)
       kept.push(
         <Box key="activity" marginTop={1}>
-          {activitySection(ctx, Math.min(inner, colW * 2 + COL_GAP), below)}
+          {activitySection(ctx, inner, below)}
         </Box>,
       )
       left -= 1 + below
