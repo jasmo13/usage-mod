@@ -1,6 +1,6 @@
 {
   "name": "usage-mod",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "A live usage band above the prompt for this Claude Code session: cost, tokens, cache, context, rate limits, turns, tools. Desktop and terminal.",
   "author": {
     "name": "Jake Campbell"

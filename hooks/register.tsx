@@ -11,6 +11,7 @@ import {
   liveLimits,
   parseUsage,
   projectSlug,
+  shortModel,
   startTurn,
   sumTokens,
   tokensOf,
@@ -243,7 +244,22 @@ const refreshBreakdown = async ($: $, isForced = false) => {
  * Brings cost, context and limits up to the moment, and the context breakdown
  * while the details show it: called on every request, tool result and turn.
  */
+/**
+ * The main loop's model, as `/model` shows it: read when the session starts, on a switch, and
+ * every other tick, so a switch shows before the next reply rather than with it. The window
+ * and where compaction starts can change with the model (200k, 1M), so a new one counts the
+ * context again, details shown or not: the Context window meter reads them too.
+ */
+const syncModel = async ($: $) => {
+  const m = await $.session.model().catch(() => undefined)
+  if (!m || shortModel(m) === shortModel(await read($, modelA))) return
+  await update($, modelA, () => m)
+  await refreshMeasure($).catch(() => undefined)
+  void refreshBreakdown($, true)
+}
+
 const syncLive = async ($: $) => {
+  await syncModel($)
   await refreshMeasure($).catch(() => undefined)
   await pollLimits($).catch(() => undefined)
   if (await read($, expandedA)) await refreshBreakdown($)
@@ -465,12 +481,7 @@ export const register: Register = on => {
       await update($, menuA, () => false)
     }
     await syncChoices($)
-    try {
-      const m = await $.session.model()
-      await update($, modelA, () => m)
-    } catch {
-      // model unknown
-    }
+    await syncModel($)
     await refreshMeasure($).catch(() => undefined)
     // Work that may take a while runs off the session's start.
     $.clock.after(50, () => {
@@ -500,6 +511,21 @@ export const register: Register = on => {
   })
   on('classic.Stop', ($, e, next) => {
     transcriptPath = e.transcript_path || transcriptPath
+    return next(e)
+  })
+  // /model, the picker or the SDK: the band names the new model at once, not after its first reply.
+  on('classic.PostModelSwitch', ($, e, next) => {
+    void syncModel($).catch(() => undefined)
+    return next(e)
+  })
+  // A setting that moves the window or where compaction starts (auto-compact in /config, a settings
+  // file edited): counted again once the change is in, so the meter follows it before the next reply.
+  on('config.set', ($, e, next) => {
+    $.clock.after(10, () => void refreshBreakdown($, true))
+    return next(e)
+  })
+  on('classic.ConfigChange', ($, e, next) => {
+    $.clock.after(10, () => void refreshBreakdown($, true))
     return next(e)
   })
 
