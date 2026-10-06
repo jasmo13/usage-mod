@@ -715,6 +715,30 @@ const summaryLine = (ctx: Ctx) => {
 
 const COL_GAP = 4
 
+/**
+ * About how many rows a tree takes: a Text or a string one, a Box its height when it sets one, else its
+ * children stacked or side by side, with its margins and padding. Nothing drawn is none. Used for the
+ * bands of other plugins drawn above this one, so this band gives them their rows.
+ */
+export const rowsOf = (node: unknown): number => {
+  if (node === null || node === undefined || typeof node === 'boolean' || node === '') return 0
+  if (typeof node === 'string' || typeof node === 'number') return 1
+  if (Array.isArray(node)) return node.reduce((n: number, child) => n + rowsOf(child), 0)
+  if (typeof node !== 'object') return 0
+  const { type, props = {}, children = [] } = node as { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+  if (type !== 'Box') return 1
+  const num = (key: string) => (typeof props[key] === 'number' ? (props[key] as number) : 0)
+  const kids = children.flat()
+  const inner =
+    typeof props.height === 'number'
+      ? props.height
+      : props.flexDirection === 'row'
+        ? kids.reduce((n: number, child) => Math.max(n, rowsOf(child)), 0)
+        : kids.reduce((n: number, child) => n + rowsOf(child), 0)
+  if (inner === 0) return 0
+  return inner + num('marginTop') + num('marginBottom') + num('paddingTop') + num('paddingBottom') + 2 * (num('marginY') + num('paddingY'))
+}
+
 export const band = (ctx: Ctx): RenderElement => {
   const { Box } = ctx.T
   if (ctx.maxRows < 4) return <Box flexDirection="column">{summaryLine(ctx)}</Box>

@@ -17,7 +17,7 @@ import {
   tokensOf,
   transcriptFolder,
 } from './collect'
-import { band, bandFigures, copiedMeasure, statusLine } from './views'
+import { band, bandFigures, copiedMeasure, rowsOf, statusLine } from './views'
 
 /** Bumped when the transcript parser changes, so history is read again. */
 const BACKFILL_VERSION = 2
@@ -834,11 +834,15 @@ export const register: Register = on => {
     await ensureTicker($, now)
     const surface = e.surface
     const T = $.ui.resolve(e)
-    return band({
+    // The slot holds one tree, so the bands of the plugins beneath this one are drawn above it, then a
+    // blank row and a rule, rather than replaced; this band keeps the rows they leave.
+    const others = await next(e)
+    const otherRows = rowsOf(others)
+    const own = band({
       T,
       Svg: surface !== 'terminal' && 'Svg' in T ? T.Svg : undefined,
       cols: e.props.bodyColumns,
-      maxRows: e.props.maxRows,
+      maxRows: otherRows === 0 ? e.props.maxRows : Math.max(1, e.props.maxRows - otherRows - 2),
       now,
       usage: usage as UsageModel,
       measure: measure as Measure | null,
@@ -898,5 +902,18 @@ export const register: Register = on => {
         $.ui.toast(copied.isCopied ? 'Usage JSON copied.' : `Could not copy: ${copied.reason}`)
       },
     })
+    if (otherRows === 0) return own
+    return (
+      <T.Box flexDirection="column">
+        {others}
+        {/* A rule wider than any band, clipped to one row, so it never wraps or ends in an ellipsis. */}
+        <T.Box key="rule" marginTop={1} height={1} overflow="hidden">
+          <T.Box width={1000} flexShrink={0}>
+            <T.Text dimColor>{'─'.repeat(500)}</T.Text>
+          </T.Box>
+        </T.Box>
+        {own}
+      </T.Box>
+    )
   })
 }
