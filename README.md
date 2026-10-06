@@ -30,7 +30,8 @@ The band's figures are meant to match the app's usage panel exactly:
 
 - **Context breakdown:** counted the way the panel counts it, not estimated. Counting exactly asks Anthropic's token-count service, so the band recounts when the chat opens, after each turn or compaction, and when you open the details; otherwise at most every 30 seconds, and only while the details are open.
 - **Percentages:** rounded to the nearest whole number.
-- **Token counts:** written as the app writes them on the desktop: "134.5k", "33k", "62.4M". The terminal always keeps one decimal place: "33.0k", "15.8k", "20.6M".
+- **Token counts:** one decimal place at most, and none when it's a zero: "134.5k", "15.8k", "33k", "62.4M". 
+- **Costs:** always to the cent: "$0.26", "$123.40".
 
 ### Where the limits come from
 
