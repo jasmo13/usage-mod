@@ -726,6 +726,8 @@ export const rowsOf = (node: unknown): number => {
   if (Array.isArray(node)) return node.reduce((n: number, child) => n + rowsOf(child), 0)
   if (typeof node !== 'object') return 0
   const { type, props = {}, children = [] } = node as { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+  // The engine's own answer beneath every band, { type: 'engine' }: it draws nothing here.
+  if (type === 'engine') return 0
   if (type !== 'Box') return 1
   const num = (key: string) => (typeof props[key] === 'number' ? (props[key] as number) : 0)
   const kids = children.flat()
