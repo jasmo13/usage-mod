@@ -73,13 +73,19 @@ test('a desktop prompt keeps its words when the app prepends a reminder', async 
   expect(m.turns.map(t => t.prompt)).toEqual(['build a mod'])
 })
 
-test('live events fill the band on the terminal and the desktop', { options: { statusLine: true } }, async ($, on) => {
+test('live events fill the band on the terminal and the desktop', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000 })
   // What the engine draws once the band passes, and its toasts.
   on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
   on('ui.toast', () => ({ value: undefined }))
   on('session.usage', () => ({ value: USAGE }))
   on('session.measure', (_$, e) => ({ changed: e.changed }))
+  const stored = new Map<string, unknown>()
+  on('store.get', (_$, e) => ({ value: stored.get(e.key) }))
+  on('store.set', (_$, e) => {
+    stored.set(e.key, e.value)
+    return { value: undefined }
+  })
   const statuses: (string | undefined)[] = []
   on('ui.status', (_$, e) => {
     statuses.push(e.text)
@@ -108,7 +114,7 @@ test('live events fill the band on the terminal and the desktop', { options: { s
   await call
   await $.session.measure({ context: USAGE.context, rateLimits: USAGE.rateLimits, cost: USAGE.cost, changed: ['cost'] })
 
-  expect(statuses.at(-1)).toBe('$0.500 · 42.5k tok · ctx 25% · Session 13%')
+  expect(statuses.filter(Boolean), 'the status line is off until chosen').toHaveLength(0)
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
@@ -128,6 +134,8 @@ test('live events fill the band on the terminal and the desktop', { options: { s
 
     await ui.press({ key: 'menu' })
     expect(await ui.find({ text: /Copy JSON/ }), `${surface}: menu open`).toBeDefined()
+    // Only the terminal draws a plugin's status line, so only its menu offers it.
+    expect(await ui.find({ text: /status line/ }), `${surface}: status line choice`)[surface === 'terminal' ? 'toBeDefined' : 'toBeUndefined']()
     expect(await ui.find({ text: /^Session limit$/ }), `${surface}: the menu covers no meter`).toBeDefined()
     await ui.press({ key: 'details' })
     expect(await ui.find({ text: /Copy JSON/ }), `${surface}: menu closes after a choice`).toBeUndefined()
@@ -140,6 +148,16 @@ test('live events fill the band on the terminal and the desktop', { options: { s
   }
 
   const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  await ui.press({ key: 'menu' })
+  expect(await ui.find({ text: /^Show status line$/ })).toBeDefined()
+  await ui.press({ key: 'status' })
+  expect(statuses.at(-1)).toBe('$0.500 · 42.5k tok · ctx 25% · Session 13%')
+  expect(stored.get('statusLine'), 'the choice is kept for the next chat').toBe(true)
+  await ui.press({ key: 'menu' })
+  expect(await ui.find({ text: /^Hide status line$/ })).toBeDefined()
+  await ui.press({ key: 'status' })
+  expect(statuses.at(-1), 'cleared').toBeUndefined()
+  expect(stored.get('statusLine')).toBe(false)
   await ui.press({ key: 'menu' })
   await ui.press({ key: 'hide' })
   expect(await ui.find({ text: /\$0\.500/ }), 'hidden band').toBeUndefined()

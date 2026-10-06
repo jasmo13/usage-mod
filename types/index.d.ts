@@ -110,6 +110,7 @@ declare module 'claude-code' {
       isExpanded: boolean
       isHidden: boolean
       isMenuOpen: boolean
+      isStatusShown: boolean
       running: RunningTool[]
       backfill: Backfill | null
       model: string
