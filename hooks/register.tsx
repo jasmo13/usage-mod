@@ -1,18 +1,19 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
-import type { Backfill, Breakdown, Measure, RunningTool, UsageModel } from '../types'
+import type { Backfill, Breakdown, Measure, RateLimitRow, RunningTool, UsageModel } from '../types'
 import {
   addCompaction,
   addRequest,
   addToolCall,
   emptyModel,
   finishTurn,
-  foldTranscript,
+  liveLimits,
   projectSlug,
   startTurn,
   sumTokens,
   tokensOf,
+  transcriptFolder,
 } from './collect'
 import { band, statusText } from './views'
 
@@ -42,8 +43,38 @@ const toMeasure = (
   contextTokens: u.context.tokens,
   contextWindow: u.context.window,
   contextPercent: u.context.percent,
-  rateLimits: u.rateLimits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })),
+  // Until this chat's first reply brings a reading, the last one (this chat's, or another's) stands.
+  rateLimits:
+    u.rateLimits.length > 0
+      ? u.rateLimits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt }))
+      : liveLimits(previous?.rateLimits ?? [], at),
 })
+
+/** The store key holding the last rate-limit reading, which belongs to the account rather than one chat. */
+const LIMITS_KEY = 'rateLimits'
+let savedLimits = ''
+// Whether this load has looked for a kept reading yet.
+let hasRecalled = false
+
+/** Keeps the latest reading for the next chat to start from; written only when it changes. */
+const rememberLimits = async ($: $, rows: readonly Pick<SessionUsage['rateLimits'][number], 'kind' | 'percentUsed' | 'resetsAt'>[]) => {
+  if (rows.length === 0) return
+  const value = rows.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt }))
+  const text = JSON.stringify(value)
+  if (text === savedLimits) return
+  savedLimits = text
+  await $.store.set(LIMITS_KEY, value).catch(() => undefined)
+}
+
+/** A new chat has no reading until its first reply: show the last one kept, if its window is still open. */
+const recallLimits = async ($: $) => {
+  const m = await read($, measureA)
+  if (!m || m.rateLimits.length > 0) return
+  const kept = await $.store.get(LIMITS_KEY).catch(() => undefined)
+  if (!Array.isArray(kept)) return
+  const rows = liveLimits(kept as RateLimitRow[], await $.clock.now())
+  if (rows.length > 0) await update($, measureA, was => (was && was.rateLimits.length === 0 ? { ...was, rateLimits: rows } : was))
+}
 
 // Set by register from the options; read by the helpers below.
 let showStatus = true
@@ -63,6 +94,11 @@ const pushStatus = async ($: $) => {
 const refreshMeasure = async ($: $) => {
   const [u, now, prev] = await Promise.all([$.session.usage(), $.clock.now(), read($, measureA)])
   await update($, measureA, () => toMeasure(now, u, prev))
+  await rememberLimits($, u.rateLimits)
+  if (!hasRecalled) {
+    hasRecalled = true
+    await recallLimits($).catch(() => undefined)
+  }
   return u
 }
 
@@ -157,6 +193,52 @@ const findTranscript = async ($: $, sessionId: string) => {
   return undefined
 }
 
+/** The engine refuses a `$.fs.read` over 4 MiB; a long chat's transcript is past it. */
+const READ_LIMIT = 4 * 1024 * 1024
+
+/**
+ * Hands each line of a text file to `onLine`. A file under the read limit is
+ * read at once; a larger one is streamed through a child that prints it
+ * (PowerShell on Windows, given the path in its environment so nothing needs
+ * quoting; `cat` elsewhere), so it is never held whole.
+ */
+export const readLines = async ($: $, path: string, onLine: (line: string) => void) => {
+  const { size } = await $.fs.stat(path)
+  if (size < READ_LIMIT) {
+    for (const line of (await $.fs.read(path)).split('\n')) onLine(line)
+    return
+  }
+  const isWindows = (await $.env.get('OS')) === 'Windows_NT'
+  const reader = $.process.spawn(
+    isWindows
+      ? {
+          argv: [
+            'powershell.exe',
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); [Console]::Out.Write([IO.File]::ReadAllText($env:SESSION_USAGE_FILE))',
+          ],
+          env: { SESSION_USAGE_FILE: path },
+        }
+      : { argv: ['cat', path] },
+  )
+  let rest = ''
+  let errors = ''
+  for await (const { stream, text } of reader) {
+    if (stream === 'stderr') {
+      errors += text
+      continue
+    }
+    const lines = (rest + text).split('\n')
+    rest = lines.pop() ?? ''
+    for (const line of lines) onLine(line)
+  }
+  onLine(rest)
+  const { code } = await reader.result
+  if (code !== 0) throw new Error(errors.trim().slice(0, 120) || `reader exited with ${code}`)
+}
+
 /** Reads what happened before this mod started counting, once per session. */
 const backfill = async ($: $) => {
   const was = await read($, backfillA)
@@ -170,9 +252,9 @@ const backfill = async ($: $) => {
     await set({ status: 'unavailable', sessionId, liveSince, version: BACKFILL_VERSION, note: 'History: transcript not found; counting from when the mod loaded.' })
     return
   }
-  let main: string
+  const main = transcriptFolder({ before: liveSince })
   try {
-    main = await $.fs.read(path)
+    await readLines($, path, main.line)
   } catch (error) {
     await set({
       status: 'unavailable',
@@ -183,7 +265,7 @@ const backfill = async ($: $) => {
     })
     return
   }
-  let model = foldTranscript(emptyModel(), main, { before: liveSince })
+  let model = main.done(emptyModel())
   let skipped = 0
   const subDir = `${path.replace(/\.jsonl$/, '')}/subagents`
   try {
@@ -191,9 +273,10 @@ const backfill = async ($: $) => {
       for (const entry of await $.fs.list(subDir)) {
         if (!entry.name.endsWith('.jsonl')) continue
         try {
-          const text = await $.fs.read(`${subDir}/${entry.name}`)
           const agentId = entry.name.replace(/^agent-/, '').replace(/\.jsonl$/, '')
-          model = foldTranscript(model, text, { before: liveSince, agentId })
+          const sub = transcriptFolder({ before: liveSince, agentId })
+          await readLines($, `${subDir}/${entry.name}`, sub.line)
+          model = sub.done(model)
         } catch {
           skipped += 1
         }
@@ -371,6 +454,7 @@ export const register: Register = (on, options) => {
   on('session.measure', async ($, e, next) => {
     const now = await $.clock.now()
     await update($, measureA, prev => toMeasure(now, e, prev))
+    await rememberLimits($, e.rateLimits)
     await pushStatus($)
     return next(e)
   })

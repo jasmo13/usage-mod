@@ -1,6 +1,7 @@
 import type {
   Bucket,
   CompactionRow,
+  RateLimitRow,
   RequestRow,
   ToolStat,
   Tokens,
@@ -128,7 +129,11 @@ export const addToolCall = (
   }
 }
 
-export const addCompaction = (m: UsageModel, row: CompactionRow): UsageModel => ({
+/** The rate-limit readings whose window has not reset yet; a reset one no longer says anything. */
+export const liveLimits = (rows: readonly RateLimitRow[], now: number) =>
+  rows.filter(l => l.resetsAt === undefined || !(Date.parse(l.resetsAt) <= now))
+
+export const addCompaction =(m: UsageModel, row: CompactionRow): UsageModel => ({
   ...m,
   compactions: [...m.compactions, row].slice(-50),
 })
@@ -188,36 +193,33 @@ const promptText = (content: unknown): string | undefined => {
 }
 
 /**
- * Folds one transcript JSONL file into the model: each assistant API message
- * once (a message is written as one row per content block, all carrying the
- * same usage), tool uses and their error results, and user prompts as turns.
- * Rows at or after `before` (ms) are left to the live hooks.
+ * Folds a transcript JSONL file into the model one line at a time, so a file
+ * read in pieces is never held whole: each assistant API message once (a
+ * message is written as one row per content block, all carrying the same
+ * usage), tool uses and their error results, and user prompts as turns. Rows
+ * at or after `before` (ms) are left to the live hooks. `done` adds it all to
+ * the model.
  */
-export const foldTranscript = (
-  m: UsageModel,
-  jsonl: string,
-  options: { before: number; agentId?: string },
-): UsageModel => {
+export const transcriptFolder = (options: { before: number; agentId?: string }) => {
   const seen = new Set<string>()
   const toolNames = new Map<string, string>()
   const toolTimes: number[] = []
   const errored = new Set<string>()
   const prompts: TurnRow[] = []
   const reqs: RequestRow[] = []
-  let model = m
 
-  for (const line of jsonl.split('\n')) {
-    if (!line.trim()) continue
+  const line = (text: string) => {
+    if (!text.trim()) return
     let row: Row
     try {
-      row = JSON.parse(line) as Row
+      row = JSON.parse(text) as Row
     } catch {
-      continue
+      return
     }
     const t = row.timestamp ? Date.parse(row.timestamp) : NaN
-    if (!Number.isFinite(t) || t >= options.before) continue
+    if (!Number.isFinite(t) || t >= options.before) return
     const msg = row.message
-    if (!msg) continue
+    if (!msg) return
 
     if (row.type === 'assistant' && msg.usage) {
       const id = msg.id ?? row.uuid ?? `${t}`
@@ -228,9 +230,9 @@ export const foldTranscript = (
           if (!options.agentId) toolTimes.push(t)
         }
       }
-      if (seen.has(id)) continue
+      if (seen.has(id)) return
       seen.add(id)
-      if (msg.model === '<synthetic>') continue
+      if (msg.model === '<synthetic>') return
       reqs.push({
         t,
         model: msg.model ?? 'unknown',
@@ -243,7 +245,7 @@ export const foldTranscript = (
       if (Array.isArray(msg.content)) {
         for (const b of msg.content) if (isToolResult(b) && b.is_error) errored.add(b.tool_use_id)
       }
-      if (options.agentId || row.isMeta || row.isSidechain || row.isCompactSummary) continue
+      if (options.agentId || row.isMeta || row.isSidechain || row.isCompactSummary) return
       const text = promptText(msg.content)
       if (text) {
         prompts.push({
@@ -259,31 +261,47 @@ export const foldTranscript = (
     }
   }
 
-  for (const r of reqs) model = addRequest(model, r)
-  for (const [id, name] of toolNames) model = addToolCall(model, name, { isError: errored.has(id) })
+  const done = (m: UsageModel): UsageModel => {
+    let model = m
+    for (const r of reqs) model = addRequest(model, r)
+    for (const [id, name] of toolNames) model = addToolCall(model, name, { isError: errored.has(id) })
 
-  if (prompts.length > 0) {
-    // Assign each backfilled request to the prompt it followed; a turn's
-    // duration is up to its last request.
-    const filled = prompts.map((p, i) => {
-      const end = prompts[i + 1]?.startedAt ?? options.before
-      const mine = reqs.filter(r => r.t >= p.startedAt && r.t < end)
-      const tokens = mine.reduce((acc, r) => addTokens(acc, r.tokens), zeroTokens())
-      const last = mine.at(-1)?.t ?? p.startedAt
-      const tools = toolTimes.filter(x => x >= p.startedAt && x < end).length
-      return {
-        ...p,
-        requests: mine.length,
-        tokens,
-        tools,
-        durationMs: Math.max(0, last - p.startedAt),
-        reason: 'answer',
-      }
-    })
-    model = { ...model, turns: [...filled, ...model.turns].sort((a, b) => a.startedAt - b.startedAt).slice(-MAX_TURNS) }
+    if (prompts.length > 0) {
+      // Assign each backfilled request to the prompt it followed; a turn's
+      // duration is up to its last request.
+      const filled = prompts.map((p, i) => {
+        const end = prompts[i + 1]?.startedAt ?? options.before
+        const mine = reqs.filter(r => r.t >= p.startedAt && r.t < end)
+        const tokens = mine.reduce((acc, r) => addTokens(acc, r.tokens), zeroTokens())
+        const last = mine.at(-1)?.t ?? p.startedAt
+        const tools = toolTimes.filter(x => x >= p.startedAt && x < end).length
+        return {
+          ...p,
+          requests: mine.length,
+          tokens,
+          tools,
+          durationMs: Math.max(0, last - p.startedAt),
+          reason: 'answer',
+        }
+      })
+      model = { ...model, turns: [...filled, ...model.turns].sort((a, b) => a.startedAt - b.startedAt).slice(-MAX_TURNS) }
+    }
+
+    return model
   }
 
-  return model
+  return { line, done }
+}
+
+/** Folds a whole transcript held as text; see `transcriptFolder`. */
+export const foldTranscript = (
+  m: UsageModel,
+  jsonl: string,
+  options: { before: number; agentId?: string },
+): UsageModel => {
+  const folder = transcriptFolder(options)
+  for (const line of jsonl.split('\n')) folder.line(line)
+  return folder.done(m)
 }
 
 /** The folder name Claude Code keeps a project's transcripts under. */
