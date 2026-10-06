@@ -22,7 +22,7 @@ Choose **Show details** to see more:
 
 The details are hidden until you choose Show details, in every new chat. When the band is short, as in a small fullscreen terminal, the sections list fewer rows, and the band scrolls if it still doesn't fit.
 
-The band appears in every chat as soon as it opens. It reads the chat's history, so a chat you come back to shows its full totals before you send anything.
+The band appears in every chat as soon as it opens. It reads the chat's history, so a chat you come back to shows its full totals before you send anything. If a chat that has already cost something has no history to read, the details end with a note saying the counts start from when the plugin loaded. A new chat has nothing earlier to count, so it shows no note.
 
 ### Matching the app's panel
 

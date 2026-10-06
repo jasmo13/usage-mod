@@ -524,9 +524,8 @@ const windowSection = (ctx: Ctx, width: number, limit: number) => {
   }))
   const rest = used.slice(shown).reduce((a, x) => a + x.tokens, 0)
   const parts = rest > 0 ? [...named, { key: 'other', name: 'Other', value: rest, paint: P.stone }] : named
-  const full = `${fmtTokens(c.tokens)} / ${fmtTokens(c.window)} (${wholePct(c.pct)})`
-  const aside = 'Context window'.length + 2 + full.length <= width ? full : `${fmtTokens(c.tokens)} / ${fmtTokens(c.window)}`
-  return section(ctx, 'window', 'Context window', aside, width, limit, [
+  // The meter above gives the percentage.
+  return section(ctx, 'window', 'Context window', `${fmtTokens(c.tokens)} / ${fmtTokens(c.window)}`, width, limit, [
     bar(ctx, 'window-bar', parts, c.window, width, { height: 5, tick: c.tick, alt: 'What fills the context window' }),
     ...parts.map(p => row(ctx, `w-${p.key}`, width, p.name, fmtTokens(p.value), { paint: p.paint, share: share(p.value, c.window) })),
     hasReserve ? row(ctx, 'w-reserve', width, 'Compaction buffer', fmtTokens(reserve), { paint: BUFFER, share: share(reserve, c.window), isDim: true }) : null,
