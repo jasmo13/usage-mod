@@ -51,6 +51,9 @@ let showStatus = true
 let transcriptPath: string | undefined
 // When the context breakdown was last counted; it is heavier than the rest, so it runs at most every few seconds.
 let breakdownAt = 0
+// The refresh timer, and when it last fired: a draw that finds it stale starts it again.
+let ticker: { cancel: () => void } | undefined
+let tickedAt = 0
 
 const pushStatus = async ($: $) => {
   if (!showStatus) return
@@ -101,6 +104,34 @@ const syncLive = async ($: $) => {
     breakdownAt = now
     await refreshBreakdown($, 'summary')
   }
+}
+
+/** How often the band redraws; cost, context and limits are read every other tick. */
+const TICK_MS = 1000
+
+/**
+ * Keeps the band in step with the chat whether or not anything is happening
+ * (durations, countdowns, cost and context all move between events). Replaces
+ * any timer already running, so a new chat or a restart never runs two.
+ */
+const startTicker = async ($: $) => {
+  ticker?.cancel()
+  tickedAt = await $.clock.now()
+  let ticks = 0
+  ticker = $.clock.every(TICK_MS, () => {
+    ticks += 1
+    void (async () => {
+      tickedAt = await $.clock.now()
+      if (await read($, hiddenA)) return
+      if (ticks % 2 === 0) await syncLive($)
+      $.ui.invalidate('ui.render')
+    })().catch(error => $.ui.log(`session-usage: refresh failed (${String(error)})`, { to: 'debug' }))
+  })
+}
+
+/** Starts the timer again when it has gone quiet: called while drawing. */
+const ensureTicker = async ($: $, now: number) => {
+  if (!ticker || now - tickedAt > TICK_MS * 3) await startTicker($)
 }
 
 /** Finds this session's transcript: the path a settings hook was given, else ~/.claude/projects/<slug>/<id>.jsonl. */
@@ -241,19 +272,7 @@ export const register: Register = (on, options) => {
       void backfill($).catch(error => $.ui.log(`session-usage: history not loaded (${String(error)})`, { to: 'debug' }))
       void refreshBreakdown($, 'summary')
     })
-    // Keeps the band in step with the chat: every second while a turn runs, every 10s when idle
-    // (durations, countdowns, cost and context, which can move between events).
-    let ticks = 0
-    $.clock.every(1000, () => {
-      ticks += 1
-      void Promise.all([read($, hiddenA), read($, runningA), read($, usageA)]).then(async ([isHidden, running, u]) => {
-        if (isHidden) return
-        const isBusy = running.length > 0 || u.turns.at(-1)?.durationMs === undefined
-        if (isBusy && ticks % 2 === 0) await syncLive($)
-        else if (!isBusy && ticks % 10 === 0) await refreshMeasure($).catch(() => undefined)
-        if (isBusy || ticks % 10 === 0) $.ui.invalidate('ui.render')
-      })
-    })
+    await startTicker($)
     return result
   })
 
@@ -262,7 +281,10 @@ export const register: Register = (on, options) => {
     // Shown again, the band starts with its details hidden and the menu closed.
     await update($, expandedA, () => false)
     await update($, menuA, () => false)
-    if (!isHidden) void refreshMeasure($).then(() => refreshBreakdown($, 'summary'))
+    if (!isHidden) {
+      void refreshMeasure($).then(() => refreshBreakdown($, 'summary'))
+      await ensureTicker($, await $.clock.now())
+    }
     return { text: isHidden ? 'Usage band hidden; /session-usage shows it again.' : 'Usage band shown above the prompt.' }
   })
 
@@ -393,6 +415,7 @@ export const register: Register = (on, options) => {
       read($, modelA),
       $.clock.now(),
     ])
+    await ensureTicker($, now)
     const surface = e.surface
     const T = $.ui.resolve(e)
     return band({

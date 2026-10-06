@@ -200,3 +200,17 @@ test('the context tile measures against compaction', async ($, on) => {
     await short.unmount()
   }
 })
+
+test('an idle band keeps refreshing with no events', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 })
+  let usage = USAGE
+  on('session.usage', () => ({ value: usage }))
+  const ui = await $.ui.mount({ plugin: 'session-usage', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  await clock.advance(2_000)
+  expect(await ui.find({ text: /\$0\.500/ }), 'first reading').toBeDefined()
+  // Cost moves with no turn, tool or measure event to announce it.
+  usage = { ...USAGE, cost: { usd: 0.9 } }
+  await clock.advance(2_000)
+  expect(await ui.find({ text: /\$0\.900/ }), 'read again while idle').toBeDefined()
+  await ui.unmount()
+})
