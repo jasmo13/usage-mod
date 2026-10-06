@@ -83,11 +83,11 @@ const recallLimits = async ($: $) => {
  * they stand, rather than as the last reply reported them.
  */
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
-/** How often an open band asks it, and how long one chat's answer serves every other. */
-const POLL_MS = 60_000
-const SHARE_MS = 55_000
+/** How often an open band asks it, and how long one chat's answer serves every other (so many open chats still ask about four times a minute). */
+const POLL_MS = 15_000
+const SHARE_MS = 14_000
 /** After a turn, ask again sooner, but never more than this often. */
-const MIN_POLL_MS = 10_000
+const MIN_POLL_MS = 5_000
 const SERVICE_KEY = 'serviceLimits'
 // Whether the service has answered this load; while it has, replies' readings are not drawn.
 let fromService = false

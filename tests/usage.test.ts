@@ -312,10 +312,10 @@ test('the limit meters follow the usage service over the last reply', async ($, 
   // A reading of the reply does not pull it back.
   await clock.advance(2_000)
   expect(await ui.find({ text: /^9%$/ })).toBeUndefined()
-  // Asked again a minute on, not on every tick.
-  await clock.advance(20_000)
+  // Asked again every 15 seconds, not on every tick.
+  await clock.advance(6_000)
   expect(asked).toHaveLength(1)
-  await clock.advance(40_000)
+  await clock.advance(10_000)
   expect(asked).toHaveLength(2)
   await ui.unmount()
 })
