@@ -20,7 +20,7 @@ Choose **Show details** to see more:
 - **Tokens**: input, output, cache writes and cache reads for the whole chat, and how much was served from cache.
 - **Activity**: turns, tool calls, the most-used tools, and tokens for the current or last turn.
 
-The details are hidden until you choose Show details, in every new chat. When the band is short, as in a small fullscreen terminal, the sections list fewer rows, and the band scrolls if it still doesn't fit.
+The details are hidden until you choose Show details. When the band is short, as in a small fullscreen terminal, the sections list fewer rows, and the band scrolls if it still doesn't fit.
 
 The band appears in every chat as soon as it opens. It reads the chat's history, so a chat you come back to shows its full totals before you send anything. If a chat that has already cost something has no history to read, the details end with a note saying the counts start from when the plugin loaded. A new chat has nothing earlier to count, so it shows no note.
 
@@ -46,9 +46,11 @@ A new chat shows the last reading it saw until fresh numbers arrive. Without a C
 - **⋯** (or `m`) opens the band's menu. In the terminal the button reads **...**:
   - **Show details** / **Hide details** (`d`)
   - **Copy JSON** (`c`) copies everything the band knows about this chat.
-  - **Show status line** / **Hide status line** (`s`), in the terminal only: a line of its own under the hint line below the prompt with what the band shows, so it can stand in for the band when the band is hidden. For example: `$0.26 · 61.1k tokens · Context window: 20% (205.9k until auto-compact) · Session limit: 16% (resets in 1 hr 56 min) · Weekly limit: 12% (resets Wed 4:00 AM)`. The cost is in orange, the dots and the notes in parentheses in gray. In a narrower terminal it condenses to fit, a step at a time: shorter notes (`205.9k left`, `1 hr 56 min`, `Wed 4:00 AM`), then shorter names (`Context`, `Session`, `Weekly`), then no notes, then no token count. It's off until you choose it, and the choice carries over to every chat. The desktop app doesn't draw that line, so its menu leaves this out.
+  - **Show status line** / **Hide status line** (`s`), in the terminal only: a line of its own under the hint line below the prompt with what the band shows, so it can stand in for the band when the band is hidden. For example: `$0.26 · 61.1k tokens · Context window: 20% (205.9k until auto-compact) · Session limit: 16% (resets in 1 hr 56 min) · Weekly limit: 12% (resets Wed 4:00 AM)`. The cost is in orange, the dots and the notes in parentheses in gray. In a narrower terminal it condenses to fit, a step at a time: shorter notes (`205.9k left`, `1 hr 56 min`, `Wed 4:00 AM`), then shorter names (`Context`, `Session`, `Weekly`), then no notes, then no token count. It's off until you choose it. The desktop app doesn't draw that line, so its menu leaves this out.
   - **Hide band** (`h`)
 - `/usage-mod` shows or hides the band.
+
+Every choice here is kept for every chat, new or old, until you change it again. A fresh install shows the band with its details hidden and, in the terminal, no status line.
 
 ## Installing
 

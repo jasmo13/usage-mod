@@ -253,6 +253,55 @@ test('the context tile measures against compaction', async ($, on) => {
   }
 })
 
+// A chat that opens with what earlier chats chose, kept in the plugin's store.
+const startWith = async (...[$, on, chosen]: [...Parameters<TestBody>, Record<string, unknown>]) => {
+  mock.clock(on, { now: 1_000 })
+  on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
+  const stored = new Map(Object.entries(chosen))
+  on('store.get', (_$, e) => ({ value: stored.get(e.key) }))
+  on('store.set', (_$, e) => {
+    stored.set(e.key, e.value)
+    return { value: undefined }
+  })
+  on('ui.toast', () => ({ value: undefined }))
+  on('session.usage', () => ({ value: USAGE }))
+  on('session.id', () => ({ value: 'later' }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  return stored
+}
+
+test('a fresh install shows the band, its details tucked away', async ($, on) => {
+  await startWith($, on, {})
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await ui.find({ text: /Session usage/ }), 'the band').toBeDefined()
+  expect(await ui.find({ text: /^Cache read$/ }), 'no details').toBeUndefined()
+  await ui.unmount()
+})
+
+test('the details chosen in one chat open the next', async ($, on) => {
+  const stored = await startWith($, on, { details: true })
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await ui.find({ text: /^Cache read$/ }), 'the details, open').toBeDefined()
+  await ui.press({ key: 'menu' })
+  await ui.press({ key: 'details' })
+  expect(stored.get('details'), 'closing them is kept too').toBe(false)
+  await ui.press({ key: 'menu' })
+  await ui.press({ key: 'hide' })
+  expect(stored.get('hidden'), 'and hiding the band').toBe(true)
+  await ui.unmount()
+})
+
+test('a band hidden in one chat stays hidden in the next', async ($, on) => {
+  const stored = await startWith($, on, { hidden: true })
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await ui.find({ text: /Session usage/ }), 'hidden').toBeUndefined()
+  await ui.unmount()
+  await $.command.run({ command: 'usage-mod', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+  expect(stored.get('hidden'), '/usage-mod shows it again, for every chat').toBe(false)
+})
+
 // A session whose transcript is nowhere: a new chat writes its first with its first message.
 const noTranscript = async (...[$, on]: Parameters<TestBody>) => {
   const clock = mock.clock(on, { now: Date.parse('2027-01-01T00:00:00Z') })
