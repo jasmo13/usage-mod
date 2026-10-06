@@ -3,7 +3,7 @@ import type { Breakdown, Measure } from '../types'
 import { expect, mock, test, type TestBody } from 'claude-code/testing'
 
 import { cacheHitRate, emptyModel, fmtMs, fmtTokens, fmtUsd, foldTranscript, projectSlug, sumTokens } from '../hooks/collect'
-import { bandFigures, copiedMeasure, statusText, textBar } from '../hooks/views'
+import { bandFigures, copiedMeasure, rowsOf, statusText, textBar } from '../hooks/views'
 
 const BAND_PROPS = {
   hasSurvey: false,
@@ -184,6 +184,8 @@ test('live events fill the band on the terminal and the desktop', async ($, on) 
 })
 
 test('a short band keeps the headline rows', async ($, on) => {
+  // What the engine draws beneath the band: nothing, here.
+  on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: USAGE }))
   const ui = await $.ui.mount({
@@ -198,6 +200,8 @@ test('a short band keeps the headline rows', async ($, on) => {
 })
 
 test('the details show when asked for, however few rows the band has', async ($, on) => {
+  // What the engine draws beneath the band: nothing, here.
+  on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: USAGE }))
   const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
@@ -399,6 +403,8 @@ for (const surface of ['terminal', 'desktop'] as const)
 
 // A session whose transcript is nowhere: a new chat writes its first with its first message.
 const noTranscript = async (...[$, on]: Parameters<TestBody>) => {
+  // What the engine draws beneath the band: nothing, here.
+  on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
   const clock = mock.clock(on, { now: Date.parse('2027-01-01T00:00:00Z') })
   on('session.id', () => ({ value: 'no-transcript' }))
   on('session.root', () => ({ value: '/proj' }))
@@ -429,6 +435,8 @@ test('a chat that has spent with no transcript to read says so', async ($, on) =
 })
 
 test('a chat whose transcript is over the read limit still loads its history', async ($, on) => {
+  // What the engine draws beneath the band: nothing, here.
+  on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
   const clock = mock.clock(on, { now: Date.parse('2027-01-01T00:00:00Z') })
   on('session.usage', () => ({ value: USAGE }))
   on('session.id', () => ({ value: 's1' }))
@@ -476,6 +484,8 @@ test('a chat whose transcript is over the read limit still loads its history', a
 })
 
 test('a new chat shows the last rate-limit reading until its first reply', async ($, on) => {
+  // What the engine draws beneath the band: nothing, here.
+  on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
   const clock = mock.clock(on, { now: Date.parse('2029-12-31T23:00:00Z') })
   const kept = [
     { kind: 'five_hour', percentUsed: 40, resetsAt: '2030-01-01T00:00:00Z' },
@@ -499,6 +509,8 @@ test('a new chat shows the last rate-limit reading until its first reply', async
 })
 
 test('an idle band keeps refreshing with no events', async ($, on) => {
+  // What the engine draws beneath the band: nothing, here.
+  on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
   const clock = mock.clock(on, { now: 1_000 })
   let usage = USAGE
   on('session.usage', () => ({ value: usage }))
@@ -513,6 +525,8 @@ test('an idle band keeps refreshing with no events', async ($, on) => {
 })
 
 test('the limit meters follow the usage service over the last reply', async ($, on) => {
+  // What the engine draws beneath the band: nothing, here.
+  on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
   const clock = mock.clock(on, { now: Date.parse('2029-12-31T23:00:00Z') })
   // The last reply's reading, behind the account's figure.
   on('session.usage', () => ({ value: { ...USAGE, rateLimits: [{ kind: 'five_hour', percentUsed: 9, resetsAt: '2030-01-01T00:00:00Z' }] } }))
@@ -606,6 +620,8 @@ test('the context breakdown is counted exactly, as the app panel counts it', asy
 })
 
 test('a stale service reading gives way to a newer reply', async ($, on) => {
+  // What the engine draws beneath the band: nothing, here.
+  on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
   const clock = mock.clock(on, { now: Date.parse('2029-12-31T23:00:00Z') })
   let reply = 9
   on('session.usage', () => ({ value: { ...USAGE, rateLimits: [{ kind: 'five_hour', percentUsed: reply, resetsAt: '2030-01-01T00:00:00Z' }] } }))
@@ -886,4 +902,34 @@ for (const surface of ['terminal', 'desktop'] as const)
   await clock.advance(10)
   expect(await ui.find({ text: /Sonnet 5\.5/ }), 'named before the next tick').toBeDefined()
   await ui.unmount()
+})
+
+for (const surface of ['terminal', 'desktop'] as const)
+  test(`${surface}: another plugin's band is drawn above this one, not hidden by it`, async ($, on) => {
+    // Another plugin's one-line band, beneath this one in the chain.
+    on('ui.render', { component: 'AbovePrompt' }, (_$, e) => h(_$.ui.resolve(e).Text, {}, 'CLAUDE.md pinned') as RenderElement)
+    await startWith($, on, {}, undefined, surface)
+    const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
+    const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+    expect(texts[0], 'the other band, first').toBe('CLAUDE.md pinned')
+    expect(await ui.find({ key: 'rule' }), 'a rule between them').toBeDefined()
+    expect(await ui.find({ text: 'Session usage' }), 'and this band under it').toBeDefined()
+    await ui.unmount()
+  })
+
+for (const surface of ['terminal', 'desktop'] as const)
+  test(`${surface}: with no other band, this one is drawn alone`, async ($, on) => {
+    await startWith($, on, {}, undefined, surface)
+    const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
+    expect(await ui.find({ key: 'rule' })).toBeUndefined()
+    expect(await ui.find({ text: 'Session usage' })).toBeDefined()
+    await ui.unmount()
+  })
+
+test('rowsOf counts the rows a band takes', () => {
+  const box = (props: Record<string, unknown>, ...children: unknown[]) => ({ type: 'Box', props, children })
+  const text = (t: string) => ({ type: 'Text', props: {}, children: [t] })
+  expect(rowsOf(box({}))).toBe(0)
+  expect(rowsOf(box({ flexDirection: 'column' }, box({}), false, box({ flexDirection: 'row' }, text('a'), text('b'))))).toBe(1)
+  expect(rowsOf(box({ flexDirection: 'column' }, text('a'), box({ marginTop: 1, height: 1 }), text('b')))).toBe(4)
 })
