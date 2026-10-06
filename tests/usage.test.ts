@@ -930,6 +930,9 @@ test('rowsOf counts the rows a band takes', () => {
   const box = (props: Record<string, unknown>, ...children: unknown[]) => ({ type: 'Box', props, children })
   const text = (t: string) => ({ type: 'Text', props: {}, children: [t] })
   expect(rowsOf(box({}))).toBe(0)
+  // What the engine hands a band hook when no other plugin draws a band.
+  expect(rowsOf({ type: 'engine', ref: 1 })).toBe(0)
+  expect(rowsOf(box({ flexDirection: 'column' }, { type: 'engine', ref: 1 }))).toBe(0)
   expect(rowsOf(box({ flexDirection: 'column' }, box({}), false, box({ flexDirection: 'row' }, text('a'), text('b'))))).toBe(1)
   expect(rowsOf(box({ flexDirection: 'column' }, text('a'), box({ marginTop: 1, height: 1 }), text('b')))).toBe(4)
 })

@@ -26,7 +26,7 @@ The details are hidden until you choose Show details. When the band is short, as
 
 The band appears in every chat as soon as it opens. It reads the chat's history, so a chat you come back to shows its full totals before you send anything. If a chat that has already cost something has no history to read, the details end with a note saying the counts start from when the plugin loaded. A new chat has nothing earlier to count, so it shows no note.
 
-If other plugins also draw bands above the prompt, such as always-read-claudemd, theirs are shown too, above this one, with a line between them. This band gives up the rows theirs take, so the prompt stays where it was.
+If other plugins also draw bands above the prompt, such as always-read-claudemd, theirs are shown too, above this one, with a line between them. With no other band, there's no line. This band gives up the rows theirs take, so the prompt stays where it was.
 
 ### Matching the app's panel
 
