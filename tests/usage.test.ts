@@ -311,7 +311,7 @@ test('the limit meters follow the usage service over the last reply', async ($, 
   expect(await ui.find({ text: /^12%$/ }), '7-day from the service').toBeDefined()
   // Named and timed as the app's panel does: time left for the session, the local day and hour for the week.
   expect(await ui.find({ text: /^Session limit$/ })).toBeDefined()
-  expect(await ui.find({ text: /^Resets in 59 min$/ }), 'session reset').toBeDefined()
+  expect(await ui.find({ text: /^Resets in 1 hr$/ }), 'session reset').toBeDefined()
   expect(await ui.find({ text: /^Weekly · all models$/ })).toBeDefined()
   const weekly = new Date('2030-01-05T00:00:00Z').toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })
   expect(await ui.find({ text: `Resets ${weekly}` }), 'weekly reset').toBeDefined()
