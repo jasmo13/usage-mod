@@ -76,8 +76,12 @@ test('a desktop prompt keeps its words when the app prepends a reminder', async 
 
 test('live events fill the band on the terminal and the desktop', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000 })
-  // What the engine draws once the band passes, and its toasts.
-  on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
+  // What the engine draws once the band passes, and its toasts; the hint line's tail as the engine is handed it.
+  const tails: (string | undefined)[] = []
+  on('ui.render', (_$, e) => {
+    if (e.component === 'PromptHint') tails.push(e.props.tail)
+    return h(_$.ui.resolve(e).Box, {}) as RenderElement
+  })
   on('ui.toast', () => ({ value: undefined }))
   on('session.usage', () => ({ value: USAGE }))
   on('session.measure', (_$, e) => ({ changed: e.changed }))
@@ -115,7 +119,13 @@ test('live events fill the band on the terminal and the desktop', async ($, on) 
   await call
   await $.session.measure({ context: USAGE.context, rateLimits: USAGE.rateLimits, cost: USAGE.cost, changed: ['cost'] })
 
-  expect(statuses.filter(Boolean), 'the status line is off until chosen').toHaveLength(0)
+  const HINT = { isDraft: false, isWorking: false, hint: '? for shortcuts' }
+  const hintTail = async (surface: 'terminal' | 'desktop') => {
+    const hint = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'PromptHint', props: HINT })
+    await hint.unmount()
+    return tails.at(-1)
+  }
+  expect(await hintTail('terminal'), 'the status line is off until chosen').toBeUndefined()
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
@@ -152,12 +162,14 @@ test('live events fill the band on the terminal and the desktop', async ($, on) 
   await ui.press({ key: 'menu' })
   expect(await ui.find({ text: /^Show status line$/ })).toBeDefined()
   await ui.press({ key: 'status' })
-  expect(statuses.at(-1)).toBe('$0.500 · 42.5k tok · ctx 25% · Session 13%')
+  expect(await hintTail('terminal'), 'at the end of the hint line').toBe(' · $0.500 · 42.5k tok · ctx 25% · Session 13%')
+  expect(await hintTail('desktop'), 'the desktop draws no tail').toBeUndefined()
   expect(stored.get('statusLine'), 'the choice is kept for the next chat').toBe(true)
   await ui.press({ key: 'menu' })
   expect(await ui.find({ text: /^Hide status line$/ })).toBeDefined()
   await ui.press({ key: 'status' })
-  expect(statuses.at(-1), 'cleared').toBeUndefined()
+  expect(await hintTail('terminal'), 'cleared').toBeUndefined()
+  expect(statuses, 'never pinned among the engine’s notices').toHaveLength(0)
   expect(stored.get('statusLine')).toBe(false)
   await ui.press({ key: 'menu' })
   await ui.press({ key: 'hide' })

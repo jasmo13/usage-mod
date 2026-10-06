@@ -170,11 +170,6 @@ let isOwed = false
 let ticker: { cancel: () => void } | undefined
 let tickedAt = 0
 
-const pushStatus = async ($: $) => {
-  if (!(await read($, statusA))) return
-  $.ui.status(statusText(await read($, usageA), await read($, measureA), await read($, breakdownA)))
-}
-
 const refreshMeasure = async ($: $) => {
   const [u, now, prev] = await Promise.all([$.session.usage(), $.clock.now(), read($, measureA)])
   noteReply(u.rateLimits, now)
@@ -230,7 +225,6 @@ const refreshBreakdown = async ($: $, isForced = false) => {
       skills: (b.skills?.skillFrontmatter ?? []).map(s => ({ name: s.name, tokens: s.tokens })),
     }
     await update($, breakdownA, () => next)
-    await pushStatus($)
   } catch (error) {
     $.ui.log(`usage-mod: context breakdown unavailable (${String(error)})`, { to: 'debug' })
   } finally {
@@ -249,7 +243,6 @@ const refreshBreakdown = async ($: $, isForced = false) => {
 const syncLive = async ($: $) => {
   await refreshMeasure($).catch(() => undefined)
   await pollLimits($).catch(() => undefined)
-  await pushStatus($)
   if (await read($, expandedA)) await refreshBreakdown($)
 }
 
@@ -430,7 +423,6 @@ const backfill = async ($: $) => {
     version: BACKFILL_VERSION,
     note: skipped ? `History: ${skipped} subagent transcript(s) could not be read.` : undefined,
   })
-  await pushStatus($)
 }
 
 export const register: Register = on => {
@@ -452,7 +444,6 @@ export const register: Register = on => {
     }
     const isStatusShown = (await $.store.get(STATUS_KEY).catch(() => undefined)) === true
     await update($, statusA, () => isStatusShown)
-    if (!isStatusShown) $.ui.status(undefined)
     try {
       const m = await $.session.model()
       await update($, modelA, () => m)
@@ -460,7 +451,6 @@ export const register: Register = on => {
       // model unknown
     }
     await refreshMeasure($).catch(() => undefined)
-    await pushStatus($)
     // Work that may take a while runs off the session's start.
     $.clock.after(50, () => {
       void backfill($).catch(error => $.ui.log(`usage-mod: history not loaded (${String(error)})`, { to: 'debug' }))
@@ -539,7 +529,6 @@ export const register: Register = on => {
       const costUsd = after !== undefined && turn?.costAtStart !== undefined ? Math.max(0, after - turn.costAtStart) : undefined
       return finishTurn(m, e.turnId, { durationMs: e.durationMs, reason: e.reason, costUsd })
     })
-    await pushStatus($)
     $.clock.after(10, () => {
       void syncLive($).then(() => pollLimits($, true))
       void refreshBreakdown($, true)
@@ -569,7 +558,6 @@ export const register: Register = on => {
     noteReply(e.rateLimits, now)
     await update($, measureA, prev => toMeasure(now, e, prev))
     if (isReplyNewest(now)) await rememberLimits($, e.rateLimits)
-    await pushStatus($)
     return next(e)
   })
 
@@ -598,6 +586,15 @@ export const register: Register = on => {
       transcriptPath = undefined
     }
     return next(e)
+  })
+
+  // The status line rides at the end of the dim hint line under the prompt, which only the terminal draws.
+  // ($.ui.status would pin it among the engine's notices, under a warning sign.)
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    if (e.surface !== 'terminal' || !(await read($, statusA))) return next(e)
+    const [usage, measure, breakdown] = await Promise.all([read($, usageA), read($, measureA), read($, breakdownA)])
+    const text = statusText(usage as UsageModel, measure as Measure | null, breakdown as Breakdown | null)
+    return next({ ...e, props: { ...e.props, tail: e.props.tail ? `${e.props.tail} · ${text}` : ` · ${text}` } })
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -643,8 +640,6 @@ export const register: Register = on => {
         await update($, menuA, () => false)
         const isShown = await update($, statusA, was => !was)
         await $.store.set(STATUS_KEY, isShown).catch(() => undefined)
-        if (isShown) await pushStatus($)
-        else $.ui.status(undefined)
       },
       onHide: async () => {
         await update($, menuA, () => false)
