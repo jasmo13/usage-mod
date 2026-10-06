@@ -16,7 +16,7 @@ import {
   tokensOf,
   transcriptFolder,
 } from './collect'
-import { band, statusLine } from './views'
+import { band, bandFigures, copiedMeasure, statusLine } from './views'
 
 /** Bumped when the transcript parser changes, so history is read again. */
 const BACKFILL_VERSION = 2
@@ -680,9 +680,17 @@ export const register: Register = on => {
       },
       onCopy: async () => {
         await update($, menuA, () => false)
-        const [u, m, b] = await Promise.all([read($, usageA), read($, measureA), read($, breakdownA)])
+        const [u, m, b, running, model, now] = await Promise.all([
+          read($, usageA),
+          read($, measureA),
+          read($, breakdownA),
+          read($, runningA),
+          read($, modelA),
+          $.clock.now(),
+        ])
+        const figures = bandFigures({ now, usage: u, measure: m, breakdown: b, running, model })
         const text = JSON.stringify(
-          { generatedAt: new Date(await $.clock.now()).toISOString(), sessionId: await $.session.id(), measure: m, ...u, totals: { ...u.totals, all: sumTokens(u.totals) }, breakdown: b },
+          { generatedAt: new Date(now).toISOString(), sessionId: await $.session.id(), band: figures, measure: copiedMeasure(m, b), ...u, totals: { ...u.totals, all: sumTokens(u.totals) }, breakdown: b },
           null,
           2,
         )

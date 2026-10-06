@@ -3,7 +3,7 @@ import type { Breakdown, Measure } from '../types'
 import { expect, mock, test, type TestBody } from 'claude-code/testing'
 
 import { cacheHitRate, emptyModel, fmtMs, fmtTokens, fmtUsd, foldTranscript, projectSlug, sumTokens } from '../hooks/collect'
-import { statusText, textBar } from '../hooks/views'
+import { bandFigures, copiedMeasure, statusText, textBar } from '../hooks/views'
 
 const BAND_PROPS = {
   hasSurvey: false,
@@ -603,4 +603,69 @@ test('the meters and the details run to the right edge', async ($, on) => {
       expect(await span(ui as never, 'sections'), `${surface} at ${bodyColumns}: the details`).toBe(bodyColumns)
       await ui.unmount()
     }
+})
+
+test("Copy JSON gives what the band shows, under the band's names", () => {
+  const measure: Measure = {
+    at: 0,
+    costUsd: 0.2219,
+    contextTokens: 60_700,
+    contextWindow: 1_000_000,
+    contextPercent: 6,
+    rateLimits: [
+      { kind: 'five_hour', percentUsed: 24, resetsAt: '2030-01-01T00:37:00Z' },
+      { kind: 'seven_day', percentUsed: 13, resetsAt: '2030-01-03T12:00:00Z' },
+    ],
+  }
+  const breakdown = {
+    at: 0, detail: 'full', model: 'claude-opus-5-5', totalTokens: 60_700, rawMaxTokens: 300_000, percentage: 20, autoCompactThreshold: 267_000, isAutoCompactEnabled: true,
+    categories: [
+      { name: 'Messages', tokens: 25_100, color: '', kind: 'used' },
+      { name: 'System tools', tokens: 19_600, color: '', kind: 'used' },
+      { name: 'Autocompact buffer', tokens: 33_000, color: '', kind: 'buffer' },
+      { name: 'Free space', tokens: 206_300, color: '', kind: 'free' },
+    ],
+    memoryFiles: [], mcpTools: [], skills: [],
+  } as Breakdown
+  const usage = emptyModel()
+  usage.totals = { input: 2, cacheWrite: 27_000, cacheRead: 33_700, output: 104, requests: 1 }
+  usage.byTool = { Bash: { calls: 3, errors: 1, denied: 0, totalMs: 0, maxMs: 0, timed: 0 } }
+  const now = Date.parse('2030-01-01T00:00:00Z')
+  const f = bandFigures({ now, usage, measure, breakdown, running: [], model: 'claude-opus-5-5' })
+  expect(f.model).toBe('Opus 5.5')
+  expect(f.tokens).toBe(60_806)
+  // The meter's percentage, against the window it shows, not the engine's 6% of 1M.
+  expect(f.contextWindow).toMatchObject({ percent: 20.2, tokens: 60_700, window: 300_000, untilAutoCompact: 206_300 })
+  expect(f.contextWindow).toMatchObject({ categories: [{ name: 'Messages', tokens: 25_100, percent: 8.4 }, { name: 'Tools', tokens: 19_600, percent: 6.5 }] })
+  expect(f.contextWindow).toMatchObject({ compactionBuffer: { tokens: 33_000, percent: 11 }, freeSpace: { tokens: 206_300, percent: 68.8 } })
+  expect(f, 'the limits as the band names them').toMatchObject({ sessionLimit: { percent: 24, resets: 'Resets in 37 min' }, weeklyLimit: { percent: 13 } })
+  expect(Object.keys(f)).not.toContain('fiveHour')
+  expect(f.tokenKinds).toMatchObject({ fromCachePercent: 55.5, cacheRead: { tokens: 33_700, percent: 55.4 } })
+  expect(f.activity).toMatchObject({ requests: 1, toolCalls: 3, failed: 1, mostUsed: ['Bash'] })
+  const m = copiedMeasure(measure, breakdown)!
+  expect(m, 'the raw measure agrees with the band').toMatchObject({ contextPercent: 20.2, contextWindow: 300_000 })
+  expect(m.rateLimits.map(l => l.limit)).toEqual(['sessionLimit', 'weeklyLimit'])
+})
+
+test("the Copy JSON button copies the band's figures, the same on the desktop and in the terminal", async ($, on) => {
+  let copied = ''
+  on('ui.copy', (_$, e) => {
+    copied = e.text
+    return { value: { isCopied: true } } as never
+  })
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  await startWith($, on, {})
+  await $.session.measure({ context: USAGE.context, rateLimits: USAGE.rateLimits, cost: USAGE.cost, changed: ['cost'] })
+  const copy = async (surface: 'terminal' | 'desktop') => {
+    const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
+    await ui.press({ key: 'menu' })
+    await ui.press({ key: 'copy' })
+    await ui.unmount()
+    return JSON.parse(copied)
+  }
+  const json = await copy('terminal')
+  expect(json.band.sessionLimit.percent).toBe(12.5)
+  expect(json.measure.rateLimits[0].limit).toBe('sessionLimit')
+  expect(json.turns, 'the raw data stays').toBeDefined()
+  expect(await copy('desktop'), 'the desktop copies the same').toEqual(json)
 })
