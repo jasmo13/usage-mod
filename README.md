@@ -1,4 +1,4 @@
-# Session usage
+# Usage mod
 
 A Claude Code plugin that shows a live usage band above the prompt. It works in the Claude desktop app's Code tab and in the terminal.
 
@@ -44,7 +44,7 @@ A new chat shows the last reading it saw until fresh numbers arrive. Without a C
   - **Show details** / **Hide details** (`d`)
   - **Copy JSON** (`c`) copies everything the band knows about this chat.
   - **Hide band** (`h`)
-- `/session-usage` shows or hides the band.
+- `/usage-mod` shows or hides the band.
 
 ### Settings
 
@@ -58,8 +58,8 @@ Add the plugin to a plugin marketplace with this repository as its source:
 
 ```json
 {
-  "name": "session-usage",
-  "source": { "source": "url", "url": "https://github.com/jasmo13/session-usage.git" },
+  "name": "usage-mod",
+  "source": { "source": "url", "url": "https://github.com/jasmo13/usage-mod.git" },
   "description": "A live usage band above the prompt."
 }
 ```
@@ -67,13 +67,13 @@ Add the plugin to a plugin marketplace with this repository as its source:
 Then install it:
 
 ```bash
-claude plugin install session-usage@<marketplace>
+claude plugin install usage-mod@<marketplace>
 ```
 
 To try it from a local copy in the terminal without installing:
 
 ```bash
-claude --plugin-dir path/to/session-usage
+claude --plugin-dir path/to/usage-mod
 ```
 
 The plugin uses Claude Code's function-hook plugin API, and it was built and tested on Claude Code 2.1.288.
@@ -87,7 +87,7 @@ claude plugin marketplace update <marketplace>
 ```
 
 ```bash
-claude plugin update session-usage@<marketplace>
+claude plugin update usage-mod@<marketplace>
 ```
 
 Then reopen your chats or restart the app.

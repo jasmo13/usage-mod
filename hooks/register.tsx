@@ -21,15 +21,15 @@ import { band, statusText } from './views'
 /** Bumped when the transcript parser changes, so history is read again. */
 const BACKFILL_VERSION = 2
 
-const usageA = atom({ plugin: 'session-usage', key: 'usage' } as const, emptyModel())
-const measureA = atom({ plugin: 'session-usage', key: 'measure' } as const, null)
-const breakdownA = atom({ plugin: 'session-usage', key: 'breakdown' } as const, null)
-const expandedA = atom({ plugin: 'session-usage', key: 'isExpanded' } as const, false)
-const hiddenA = atom({ plugin: 'session-usage', key: 'isHidden' } as const, false)
-const menuA = atom({ plugin: 'session-usage', key: 'isMenuOpen' } as const, false)
-const runningA = atom({ plugin: 'session-usage', key: 'running' } as const, [])
-const backfillA = atom({ plugin: 'session-usage', key: 'backfill' } as const, null)
-const modelA = atom({ plugin: 'session-usage', key: 'model' } as const, '')
+const usageA = atom({ plugin: 'usage-mod', key: 'usage' } as const, emptyModel())
+const measureA = atom({ plugin: 'usage-mod', key: 'measure' } as const, null)
+const breakdownA = atom({ plugin: 'usage-mod', key: 'breakdown' } as const, null)
+const expandedA = atom({ plugin: 'usage-mod', key: 'isExpanded' } as const, false)
+const hiddenA = atom({ plugin: 'usage-mod', key: 'isHidden' } as const, false)
+const menuA = atom({ plugin: 'usage-mod', key: 'isMenuOpen' } as const, false)
+const runningA = atom({ plugin: 'usage-mod', key: 'running' } as const, [])
+const backfillA = atom({ plugin: 'usage-mod', key: 'backfill' } as const, null)
+const modelA = atom({ plugin: 'usage-mod', key: 'model' } as const, '')
 
 type $ = EngineInterface
 
@@ -138,7 +138,7 @@ const pollLimits = async ($: $, isAfterTurn = false) => {
     if (!auth) return
     const failed = (why: string) => {
       pollGap = Math.min(pollGap * 2, MAX_POLL_MS)
-      $.ui.log(`session-usage: usage service ${why}; asking again in ${pollGap / 1000}s`, { to: 'debug' })
+      $.ui.log(`usage-mod: usage service ${why}; asking again in ${pollGap / 1000}s`, { to: 'debug' })
     }
     try {
       const res = await $.http.fetch(USAGE_URL, { auth: auth.handle, headers: { 'anthropic-beta': 'oauth-2025-04-20' } })
@@ -230,7 +230,7 @@ const refreshBreakdown = async ($: $, isForced = false) => {
     }
     await update($, breakdownA, () => next)
   } catch (error) {
-    $.ui.log(`session-usage: context breakdown unavailable (${String(error)})`, { to: 'debug' })
+    $.ui.log(`usage-mod: context breakdown unavailable (${String(error)})`, { to: 'debug' })
   } finally {
     isCounting = false
     if (isOwed) {
@@ -270,7 +270,7 @@ const startTicker = async ($: $) => {
       if (await read($, hiddenA)) return
       if (ticks % 2 === 0) await syncLive($)
       $.ui.invalidate('ui.render')
-    })().catch(error => $.ui.log(`session-usage: refresh failed (${String(error)})`, { to: 'debug' }))
+    })().catch(error => $.ui.log(`usage-mod: refresh failed (${String(error)})`, { to: 'debug' }))
   })
 }
 
@@ -326,9 +326,9 @@ export const readLines = async ($: $, path: string, onLine: (line: string) => vo
             '-NoProfile',
             '-NonInteractive',
             '-Command',
-            '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); [Console]::Out.Write([IO.File]::ReadAllText($env:SESSION_USAGE_FILE))',
+            '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); [Console]::Out.Write([IO.File]::ReadAllText($env:USAGE_MOD_FILE))',
           ],
-          env: { SESSION_USAGE_FILE: path },
+          env: { USAGE_MOD_FILE: path },
         }
       : { argv: ['cat', path] },
   )
@@ -437,7 +437,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
     await $.command.register({
-      name: 'session-usage',
+      name: 'usage-mod',
       description: 'Show or hide the usage band above the prompt',
     })
     const bf = await read($, backfillA)
@@ -461,14 +461,14 @@ export const register: Register = (on, options) => {
     await pushStatus($)
     // Work that may take a while runs off the session's start.
     $.clock.after(50, () => {
-      void backfill($).catch(error => $.ui.log(`session-usage: history not loaded (${String(error)})`, { to: 'debug' }))
+      void backfill($).catch(error => $.ui.log(`usage-mod: history not loaded (${String(error)})`, { to: 'debug' }))
       void refreshBreakdown($, true)
     })
     await startTicker($)
     return result
   })
 
-  on('command.run', { command: 'session-usage' }, async $ => {
+  on('command.run', { command: 'usage-mod' }, async $ => {
     const isHidden = await update($, hiddenA, was => !was)
     // Shown again, the band starts with its details hidden and the menu closed.
     await update($, expandedA, () => false)
@@ -477,7 +477,7 @@ export const register: Register = (on, options) => {
       void refreshMeasure($).then(() => refreshBreakdown($, true))
       await ensureTicker($, await $.clock.now())
     }
-    return { text: isHidden ? 'Usage band hidden; /session-usage shows it again.' : 'Usage band shown above the prompt.' }
+    return { text: isHidden ? 'Usage band hidden; /usage-mod shows it again.' : 'Usage band shown above the prompt.' }
   })
 
   // Every settings-hook event names the transcript; the first one tells us where history lives.
@@ -637,7 +637,7 @@ export const register: Register = (on, options) => {
       onHide: async () => {
         await update($, menuA, () => false)
         await update($, hiddenA, () => true)
-        $.ui.toast('Usage band hidden; /session-usage shows it again.')
+        $.ui.toast('Usage band hidden; /usage-mod shows it again.')
       },
       onCopy: async () => {
         await update($, menuA, () => false)
