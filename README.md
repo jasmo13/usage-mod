@@ -50,7 +50,7 @@ A new chat shows the last reading it saw until fresh numbers arrive. Without a C
   - **Hide band** (`h`)
 - `/usage-mod` shows or hides the band.
 
-Every choice here is kept for every chat, new or old, until you change it again. A fresh install shows the band with its details hidden and, in the terminal, no status line.
+Every choice here is kept for every chat, new or old, until you change it again. Chats already open, whether desktop chats or other terminals, follow the change within a second. A fresh install shows the band with its details hidden and, in the terminal, no status line.
 
 ## Installing
 

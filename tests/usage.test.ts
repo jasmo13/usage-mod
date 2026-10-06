@@ -255,7 +255,7 @@ test('the context tile measures against compaction', async ($, on) => {
 
 // A chat that opens with what earlier chats chose, kept in the plugin's store.
 const startWith = async (...[$, on, chosen]: [...Parameters<TestBody>, Record<string, unknown>]) => {
-  mock.clock(on, { now: 1_000 })
+  const clock = mock.clock(on, { now: 1_000 })
   on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
   const stored = new Map(Object.entries(chosen))
   on('store.get', (_$, e) => ({ value: stored.get(e.key) }))
@@ -269,7 +269,7 @@ const startWith = async (...[$, on, chosen]: [...Parameters<TestBody>, Record<st
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
-  return stored
+  return { stored, clock }
 }
 
 test('a fresh install shows the band, its details tucked away', async ($, on) => {
@@ -281,7 +281,7 @@ test('a fresh install shows the band, its details tucked away', async ($, on) =>
 })
 
 test('the details chosen in one chat open the next', async ($, on) => {
-  const stored = await startWith($, on, { details: true })
+  const { stored } = await startWith($, on, { details: true })
   const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
   expect(await ui.find({ text: /^Cache read$/ }), 'the details, open').toBeDefined()
   await ui.press({ key: 'menu' })
@@ -294,12 +294,31 @@ test('the details chosen in one chat open the next', async ($, on) => {
 })
 
 test('a band hidden in one chat stays hidden in the next', async ($, on) => {
-  const stored = await startWith($, on, { hidden: true })
+  const { stored } = await startWith($, on, { hidden: true })
   const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
   expect(await ui.find({ text: /Session usage/ }), 'hidden').toBeUndefined()
   await ui.unmount()
   await $.command.run({ command: 'usage-mod', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
   expect(stored.get('hidden'), '/usage-mod shows it again, for every chat').toBe(false)
+})
+
+test('a chat already open follows a choice made in another', async ($, on) => {
+  const { stored, clock } = await startWith($, on, {})
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await ui.find({ text: /^Cache read$/ }), 'no details yet').toBeUndefined()
+  stored.set('details', true)
+  await clock.advance(1_000)
+  expect(await ui.find({ text: /^Cache read$/ }), 'the details, opened elsewhere').toBeDefined()
+  stored.set('hidden', true)
+  await clock.advance(1_000)
+  expect(await ui.find({ text: /Session usage/ }), 'hidden elsewhere').toBeUndefined()
+  await ui.unmount()
+  const hint = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } })
+  expect(await hint.find({ text: /Context window/ }), 'no status line yet').toBeUndefined()
+  stored.set('statusLine', true)
+  await clock.advance(1_000)
+  expect(await hint.find({ text: /Context window/ }), 'the status line, turned on in another terminal').toBeDefined()
+  await hint.unmount()
 })
 
 // A session whose transcript is nowhere: a new chat writes its first with its first message.
