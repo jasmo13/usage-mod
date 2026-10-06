@@ -2,7 +2,7 @@ import type { RenderElement } from 'claude-code'
 import type { Breakdown, Measure } from '../types'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { cacheHitRate, emptyModel, fmtMs, fmtTokens, foldTranscript, projectSlug, sumTokens } from '../hooks/collect'
+import { cacheHitRate, emptyModel, fmtMs, fmtTokens, fmtUsd, foldTranscript, projectSlug, sumTokens } from '../hooks/collect'
 import { statusText, textBar } from '../hooks/views'
 
 const BAND_PROPS = {
@@ -247,9 +247,7 @@ test('the context tile measures against compaction', async ($, on) => {
     expect(await short.find({ text: /^Free space$/ }), `${surface}: details in 12 rows`).toBeDefined()
     expect(await short.find({ text: /^Cache read$/ }), `${surface}: token rows in 12 rows`).toBeDefined()
     expect(await short.find({ text: /^50%$/ }), `${surface}: context against its window`).toBeDefined()
-    // One place always in the terminal; as the app writes it on the desktop.
-    const until = surface === 'terminal' ? /30\.0k until auto-compact/ : /30k until auto-compact/
-    expect(await short.find({ text: until }), `${surface}: tokens until compaction`).toBeDefined()
+    expect(await short.find({ text: /30k until auto-compact/ }), `${surface}: tokens until compaction, no place for a zero`).toBeDefined()
     if (surface === 'terminal') expect(await short.find({ text: /╋/ }), 'terminal: compaction tick').toBeDefined()
     await short.unmount()
   }
@@ -387,12 +385,14 @@ test('token counts read as the app writes them', () => {
   expect(fmtTokens(134_500)).toBe('134.5k')
   expect(fmtTokens(999_960)).toBe('1M')
   expect(fmtTokens(62_400_000)).toBe('62.4M')
-  // The terminal keeps the one place.
-  expect(fmtTokens(320, true)).toBe('320')
-  expect(fmtTokens(33_000, true)).toBe('33.0k')
-  expect(fmtTokens(15_800, true)).toBe('15.8k')
-  expect(fmtTokens(20_600_000, true)).toBe('20.6M')
-  expect(fmtTokens(999_960, true)).toBe('1.0M')
+  expect(fmtTokens(15_800)).toBe('15.8k')
+  expect(fmtTokens(20_600_000)).toBe('20.6M')
+})
+
+test('costs read to the cent', () => {
+  expect(fmtUsd(0.256)).toBe('$0.26')
+  expect(fmtUsd(0.5)).toBe('$0.50')
+  expect(fmtUsd(123.4)).toBe('$123.40')
 })
 
 test('durations read in whole units', () => {
@@ -464,7 +464,7 @@ test('the status line measures context against the same window as the band', asy
   const breakdown = { at: 0, detail: 'full', model: 'claude-opus-5-5', totalTokens: 61_078, rawMaxTokens: 300_000, percentage: 20, autoCompactThreshold: 267_000, isAutoCompactEnabled: true, categories: [], memoryFiles: [], mcpTools: [], skills: [] } as Breakdown
   // The band's Context window meter reads 20% of 300k; the status line said "ctx 6.0%" against a larger window.
   expect(statusText(emptyModel(), measure, breakdown, 0)).toContain('Context window: 20% (205.9k until auto-compact)')
-  expect(statusText(emptyModel(), measure, null, 0), 'before the breakdown is counted').toContain('Context window: 6.1%')
+  expect(statusText(emptyModel(), measure, null, 0), 'before the breakdown is counted, as the band rounds it').toContain('Context window: 6%')
   // Whole cents: a bill is never a fraction of one.
   expect(statusText(emptyModel(), measure, breakdown, 0)).toMatch(/^\$0\.26 · /)
 })

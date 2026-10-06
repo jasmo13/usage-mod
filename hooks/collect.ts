@@ -342,18 +342,17 @@ export const projectSlug = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, '-')
 /** One decimal, a whole one dropped: "134.5k", "33k", "62.4M", as the app writes them. */
 const oneDecimal = (n: number) => n.toFixed(1).replace(/\.0$/, '')
 
-/** Tokens as the app writes them ("33k", "134.5k"); `isFixed` keeps the one place always ("33.0k"), as the terminal shows them. */
-export const fmtTokens = (n: number, isFixed = false) => {
-  const place = isFixed ? (x: number) => x.toFixed(1) : oneDecimal
-  if (n >= 999_950_000) return `${place(n / 1e9)}B`
-  if (n >= 999_950) return `${place(n / 1e6)}M`
-  if (n >= 999.5) return `${place(n / 1e3)}k`
+/** Tokens as the app writes them, one place at most and none when it's a zero: "33k", "15.8k", "20.6M". */
+export const fmtTokens = (n: number) => {
+  if (n >= 999_950_000) return `${oneDecimal(n / 1e9)}B`
+  if (n >= 999_950) return `${oneDecimal(n / 1e6)}M`
+  if (n >= 999.5) return `${oneDecimal(n / 1e3)}k`
   return `${Math.round(n)}`
 }
 
 export const fmtUsd = (n: number | undefined) =>
-  // Whole cents below $100: a bill is never a fraction of one.
-  n === undefined ? '—' : n >= 100 ? `$${n.toFixed(0)}` : `$${n.toFixed(2)}`
+  // Always to the cent, never a fraction of one.
+  n === undefined ? '—' : `$${n.toFixed(2)}`
 
 /** A duration in whole units: "850ms", "4s", "2m 5s", "1h 3m". */
 export const fmtMs = (ms: number) => {
