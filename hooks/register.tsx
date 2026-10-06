@@ -55,6 +55,9 @@ const toMeasure = (
 
 /** The store key holding whether the terminal's status line carries the usage too: chosen from the band's menu, kept for every chat. */
 const STATUS_KEY = 'statusLine'
+/** The store keys holding whether the details are shown and the band hidden: chosen from the menu or /usage-mod, kept for every chat. */
+const DETAILS_KEY = 'details'
+const HIDDEN_KEY = 'hidden'
 /** The store key holding the last rate-limit reading, which belongs to the account rather than one chat. */
 const LIMITS_KEY = 'rateLimits'
 let savedLimits = ''
@@ -442,12 +445,14 @@ export const register: Register = on => {
       const liveSince = await $.clock.now()
       await update($, usageA, () => emptyModel())
       await update($, backfillA, () => ({ status: 'pending', liveSince, version: BACKFILL_VERSION }) as Backfill)
-      // A new chat opens the band with its details tucked away; Show details opens them.
-      await update($, expandedA, () => false)
       await update($, menuA, () => false)
     }
-    const isStatusShown = (await $.store.get(STATUS_KEY).catch(() => undefined)) === true
+    // The choices made in any chat, kept for every chat; a fresh install shows the band, its details tucked away, and no status line.
+    const chosen = async (key: string) => (await $.store.get(key).catch(() => undefined)) === true
+    const [isStatusShown, isExpanded, isHidden] = await Promise.all([chosen(STATUS_KEY), chosen(DETAILS_KEY), chosen(HIDDEN_KEY)])
     await update($, statusA, () => isStatusShown)
+    await update($, expandedA, () => isExpanded)
+    await update($, hiddenA, () => isHidden)
     try {
       const m = await $.session.model()
       await update($, modelA, () => m)
@@ -466,8 +471,8 @@ export const register: Register = on => {
 
   on('command.run', { command: 'usage-mod' }, async $ => {
     const isHidden = await update($, hiddenA, was => !was)
-    // Shown again, the band starts with its details hidden and the menu closed.
-    await update($, expandedA, () => false)
+    await $.store.set(HIDDEN_KEY, isHidden).catch(() => undefined)
+    // Shown again, the band keeps its details as they were chosen, with the menu closed.
     await update($, menuA, () => false)
     if (!isHidden) {
       void refreshMeasure($).then(() => refreshBreakdown($, true))
@@ -647,6 +652,7 @@ export const register: Register = on => {
       onExpand: async () => {
         await update($, menuA, () => false)
         const isOpen = await update($, expandedA, was => !was)
+        await $.store.set(DETAILS_KEY, isOpen).catch(() => undefined)
         if (isOpen) void refreshBreakdown($, true)
       },
       onStatus: async () => {
@@ -657,6 +663,7 @@ export const register: Register = on => {
       onHide: async () => {
         await update($, menuA, () => false)
         await update($, hiddenA, () => true)
+        await $.store.set(HIDDEN_KEY, true).catch(() => undefined)
         $.ui.toast('Usage band hidden; /usage-mod shows it again.')
       },
       onCopy: async () => {

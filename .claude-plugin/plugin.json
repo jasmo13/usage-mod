@@ -1,6 +1,6 @@
 {
   "name": "usage-mod",
-  "version": "0.4.9",
+  "version": "0.5.0",
   "description": "A live usage band above the prompt for this Claude Code session: cost, tokens, cache, context, rate limits, turns, tools. Desktop and terminal.",
   "types": "./types/index.d.ts"
 }
