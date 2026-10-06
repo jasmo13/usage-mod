@@ -26,8 +26,12 @@ export type Ctx = {
   model: string
   isExpanded: boolean
   isMenuOpen: boolean
+  /** The terminal has a status line under the prompt; the desktop draws none for plugins. */
+  isTerminal: boolean
+  isStatusShown: boolean
   onMenu: () => unknown
   onExpand: () => unknown
+  onStatus: () => unknown
   onHide: () => unknown
   onCopy: () => unknown
 }
@@ -440,6 +444,9 @@ const sessionBlock = (ctx: Ctx, width: number) => {
 const menuOptions = (ctx: Ctx) => [
   { key: 'copy', label: 'Copy JSON', hotkey: 'c', onPress: ctx.onCopy },
   { key: 'details', label: ctx.isExpanded ? 'Hide details' : 'Show details', hotkey: 'd', onPress: ctx.onExpand },
+  ...(ctx.isTerminal
+    ? [{ key: 'status', label: ctx.isStatusShown ? 'Hide status line' : 'Show status line', hotkey: 's', onPress: ctx.onStatus }]
+    : []),
   { key: 'hide', label: 'Hide band', hotkey: 'h', onPress: ctx.onHide },
 ]
 

@@ -30,6 +30,7 @@ const menuA = atom({ plugin: 'usage-mod', key: 'isMenuOpen' } as const, false)
 const runningA = atom({ plugin: 'usage-mod', key: 'running' } as const, [])
 const backfillA = atom({ plugin: 'usage-mod', key: 'backfill' } as const, null)
 const modelA = atom({ plugin: 'usage-mod', key: 'model' } as const, '')
+const statusA = atom({ plugin: 'usage-mod', key: 'isStatusShown' } as const, false)
 
 type $ = EngineInterface
 
@@ -52,6 +53,8 @@ const toMeasure = (
       : liveLimits(previous?.rateLimits ?? [], at),
 })
 
+/** The store key holding whether the terminal's status line carries the usage too: chosen from the band's menu, kept for every chat. */
+const STATUS_KEY = 'statusLine'
 /** The store key holding the last rate-limit reading, which belongs to the account rather than one chat. */
 const LIMITS_KEY = 'rateLimits'
 let savedLimits = ''
@@ -157,8 +160,6 @@ const pollLimits = async ($: $, isAfterTurn = false) => {
   await rememberLimits($, live)
 }
 
-// Set by register from the options; read by the helpers below.
-let showStatus = true
 // Where the transcript is, once a settings-hook event has said; a guess until then.
 let transcriptPath: string | undefined
 // When the context breakdown was last counted, whether a count is running, and whether another is owed once it ends.
@@ -170,7 +171,7 @@ let ticker: { cancel: () => void } | undefined
 let tickedAt = 0
 
 const pushStatus = async ($: $) => {
-  if (!showStatus) return
+  if (!(await read($, statusA))) return
   $.ui.status(statusText(await read($, usageA), await read($, measureA)))
 }
 
@@ -431,9 +432,7 @@ const backfill = async ($: $) => {
   await pushStatus($)
 }
 
-export const register: Register = (on, options) => {
-  showStatus = options.statusLine === true
-
+export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
     await $.command.register({
@@ -450,7 +449,9 @@ export const register: Register = (on, options) => {
       await update($, expandedA, () => false)
       await update($, menuA, () => false)
     }
-    if (!showStatus) $.ui.status(undefined)
+    const isStatusShown = (await $.store.get(STATUS_KEY).catch(() => undefined)) === true
+    await update($, statusA, () => isStatusShown)
+    if (!isStatusShown) $.ui.status(undefined)
     try {
       const m = await $.session.model()
       await update($, modelA, () => m)
@@ -600,12 +601,13 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || (await read($, hiddenA))) return next(e)
-    const [usage, measure, breakdown, isExpanded, isMenuOpen, running, backfillState, model, now] = await Promise.all([
+    const [usage, measure, breakdown, isExpanded, isMenuOpen, isStatusShown, running, backfillState, model, now] = await Promise.all([
       read($, usageA),
       read($, measureA),
       read($, breakdownA),
       read($, expandedA),
       read($, menuA),
+      read($, statusA),
       read($, runningA),
       read($, backfillA),
       read($, modelA),
@@ -628,11 +630,20 @@ export const register: Register = (on, options) => {
       model: model as string,
       isExpanded,
       isMenuOpen,
+      isTerminal: surface === 'terminal',
+      isStatusShown,
       onMenu: () => update($, menuA, was => !was),
       onExpand: async () => {
         await update($, menuA, () => false)
         const isOpen = await update($, expandedA, was => !was)
         if (isOpen) void refreshBreakdown($, true)
+      },
+      onStatus: async () => {
+        await update($, menuA, () => false)
+        const isShown = await update($, statusA, was => !was)
+        await $.store.set(STATUS_KEY, isShown).catch(() => undefined)
+        if (isShown) await pushStatus($)
+        else $.ui.status(undefined)
       },
       onHide: async () => {
         await update($, menuA, () => false)

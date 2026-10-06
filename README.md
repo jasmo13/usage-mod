@@ -43,14 +43,9 @@ A new chat shows the last reading it saw until fresh numbers arrive. Without a C
 - **⋯** (or `m`) opens the band's menu. In the terminal the button reads **...**:
   - **Show details** / **Hide details** (`d`)
   - **Copy JSON** (`c`) copies everything the band knows about this chat.
+  - **Show status line** / **Hide status line** (`s`), in the terminal only: also shows cost, tokens, context and limits in the status line under the prompt, for example `$1.84 · 182k tok · ctx 41% · Session 13% · Weekly 12%`. It's off until you choose it, and the choice carries over to every chat. The desktop app doesn't draw a plugin's status line, so its menu leaves this out.
   - **Hide band** (`h`)
 - `/usage-mod` shows or hides the band.
-
-### Settings
-
-| Setting | Default | What it does |
-| --- | --- | --- |
-| Usage in the status line | Off | Also shows cost, tokens, context and limits in the status line, for example `$1.84 · 182k tok · ctx 41% · Session 13% · Weekly 12%`. |
 
 ## Installing
 
