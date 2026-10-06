@@ -1,0 +1,17 @@
+{
+  "name": "usage-mod",
+  "description": "The usage-mod plugin for Claude Code, installable straight from its repository.",
+  "owner": {
+    "name": "Jake Campbell"
+  },
+  "plugins": [
+    {
+      "name": "usage-mod",
+      "source": "./",
+      "description": "A live usage band above the prompt: cost, tokens, cache, context, rate limits, turns and tools. Desktop and terminal.",
+      "author": {
+        "name": "Jake Campbell"
+      }
+    }
+  ]
+}

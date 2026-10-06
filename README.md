@@ -54,7 +54,25 @@ Every choice here is kept for every chat, new or old, until you change it again.
 
 ## Installing
 
-Add the plugin to a plugin marketplace with this repository as its source:
+This repository is its own plugin marketplace, so two commands install it, whether or not you've added a marketplace before. In a terminal:
+
+```bash
+claude plugin marketplace add jasmo13/usage-mod
+```
+
+```bash
+claude plugin install usage-mod@usage-mod
+```
+
+Then open a new chat, or restart the desktop app; the band shows above the prompt. You need to be able to read this repository on GitHub: while it's private, that means being signed in to GitHub as someone with access, the same as for `git clone`.
+
+To try it from a local copy in the terminal without installing:
+
+```bash
+claude --plugin-dir path/to/usage-mod
+```
+
+To list it in a marketplace of your own instead, add this entry to that marketplace's `plugins`, then install it as `usage-mod@<marketplace>`:
 
 ```json
 {
@@ -64,23 +82,11 @@ Add the plugin to a plugin marketplace with this repository as its source:
 }
 ```
 
-Then install it:
-
-```bash
-claude plugin install usage-mod@<marketplace>
-```
-
-To try it from a local copy in the terminal without installing:
-
-```bash
-claude --plugin-dir path/to/usage-mod
-```
-
 The plugin uses Claude Code's function-hook plugin API, and it was built and tested on Claude Code 2.1.288.
 
 ### Updating
 
-Releases come from `main`. After a new version is merged, update with:
+Releases come from `main`. After a new version is merged, update with the marketplace you installed it from (`usage-mod` if you followed the steps above):
 
 ```bash
 claude plugin marketplace update <marketplace>
@@ -88,6 +94,16 @@ claude plugin marketplace update <marketplace>
 
 ```bash
 claude plugin update usage-mod@<marketplace>
+```
+
+Installed with the steps above, that's:
+
+```bash
+claude plugin marketplace update usage-mod
+```
+
+```bash
+claude plugin update usage-mod@usage-mod
 ```
 
 From the `jakes-place` marketplace, that's:
