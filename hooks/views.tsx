@@ -108,7 +108,8 @@ export const textBar = (frac: number, width: number) => {
  * the local day and time for the weekly ones ("Resets Wed 4:00 AM").
  */
 const fmtReset = (kind: string, iso: string | undefined, now: number): string[] => {
-  const at = iso === undefined ? NaN : Date.parse(iso)
+  // To the nearest minute, as the panel does: the service gives 09:59:59.965 for a 10:00 reset.
+  const at = iso === undefined ? NaN : Math.round(Date.parse(iso) / 60_000) * 60_000
   if (!Number.isFinite(at)) return []
   if (at <= now) return ['Resetting']
   if (kind === 'five_hour') {

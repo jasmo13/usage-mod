@@ -296,7 +296,8 @@ test('the limit meters follow the usage service over the last reply', async ($, 
     asked.push({ url: e.url, auth: e.init?.auth })
     const body = {
       five_hour: { utilization: 10.4, resets_at: '2030-01-01T00:00:00+00:00' },
-      seven_day: { utilization: 12, resets_at: '2030-01-05T00:00:00+00:00' },
+      // A few milliseconds short of the hour, as the service gives it.
+      seven_day: { utilization: 12, resets_at: '2030-01-04T23:59:59.965+00:00' },
       seven_day_opus: null,
     }
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } }
