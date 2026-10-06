@@ -158,11 +158,42 @@ const pollLimits = async ($: $, isAfterTurn = false, isNow = false) => {
     pollGap = POLL_MS
     await $.store.set(SERVICE_KEY, { at: now, rateLimits: rows }).catch(() => undefined)
   }
+  await showService($, rows, takenAt, now)
+}
+
+/** Shows the usage service's figures, taken at `takenAt` by this chat or another. */
+const showService = async ($: $, rows: readonly RateLimitRow[], takenAt: number, now: number) => {
   fromService = true
   serviceAt = takenAt
   const live = liveLimits(rows, now)
   await update($, measureA, was => (was ? { ...was, rateLimits: live } : was))
   await rememberLimits($, live)
+}
+
+/**
+ * Takes another chat's answer from the usage service the moment it is kept, rather than at this
+ * chat's next ask: the limits are the account's, so a reply in any chat moves them in all.
+ */
+const adoptShared = async ($: $) => {
+  const shared = (await $.store.get(SERVICE_KEY).catch(() => undefined)) as { at?: number; rateLimits?: RateLimitRow[] } | undefined
+  if (shared?.at === undefined || !Array.isArray(shared.rateLimits) || (fromService && shared.at <= serviceAt)) return
+  const now = await $.clock.now()
+  if (now - shared.at > STALE_MS) return
+  polledAt = now
+  await showService($, shared.rateLimits, shared.at, now)
+}
+
+/**
+ * What one chat changes that every chat shows (a slash command such as /autocompact or /login, a setting,
+ * a Copy JSON's fresh reading), noted in the store, whose files every chat watches: the others read
+ * everything again at once. A chat passes over its own notes, and reading again never writes one.
+ */
+const NUDGE_KEY = 'changed'
+let nudgeSeen = 0
+const nudgeOthers = async ($: $) => {
+  const [at, by] = await Promise.all([$.clock.now(), $.session.id()])
+  nudgeSeen = Math.max(nudgeSeen, at)
+  await $.store.set(NUDGE_KEY, { at, by }).catch(() => undefined)
 }
 
 // Where the transcript is, once a settings-hook event has said; a guess until then.
@@ -331,6 +362,35 @@ const checkWindow = async ($: $) => {
 }
 
 /**
+ * The store changed, in this chat or another: the choices read again, another chat's answer from the
+ * usage service taken, and, on another chat's note, everything read again. One at a time; a change
+ * heard meanwhile runs it once more after.
+ */
+let isHearing = false
+let isHeardAgain = false
+const hearStore = async ($: $) => {
+  if (isHearing) return void (isHeardAgain = true)
+  isHearing = true
+  try {
+    do {
+      isHeardAgain = false
+      await syncChoices($)
+      await adoptShared($)
+      const note = (await $.store.get(NUDGE_KEY).catch(() => undefined)) as { at?: number; by?: string } | undefined
+      if (note?.at === undefined || note.at <= nudgeSeen) continue
+      nudgeSeen = note.at
+      if (note.by === (await $.session.id())) continue
+      await syncModel($)
+      await refreshMeasure($).catch(() => undefined)
+      await checkWindow($)
+      $.ui.invalidate('ui.render')
+    } while (isHeardAgain)
+  } finally {
+    isHearing = false
+  }
+}
+
+/**
  * Keeps the band in step with the chat whether or not anything is happening
  * (durations, countdowns, cost and context all move between events). Replaces
  * any timer already running, so a new chat or a restart never runs two.
@@ -362,13 +422,34 @@ const ensureTicker = async ($: $, now: number) => {
   if (!ticker || now - tickedAt > TICK_MS * 3) await startTicker($)
 }
 
+/** Claude Code's configuration directory: ~/.claude unless CLAUDE_CONFIG_DIR moves it. */
+const configDir = async ($: $) =>
+  (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '~'}/.claude`
+
+/** Whether a path is one of the store's files, written with either slash and in any case, as Windows allows. */
+const isStoreFile = (path: string) => /\/plugins\/store\/usage-mod_[^/]*\.json$/.test(path.replace(/\\/g, '/').toLowerCase())
+
+/**
+ * The store's files, one per place the plugin was installed from (usage-mod_<source>-<hash>.json),
+ * for the session to watch: a choice written in any chat reaches every other at once, rather
+ * than on the next tick. A fresh install has none until something is kept, so one is kept first.
+ */
+const findStoreFiles = async ($: $) => {
+  const dir = `${await configDir($)}/plugins/store`
+  const list = async () =>
+    (await $.fs.list(dir).catch(() => [])).filter(f => f.name.startsWith('usage-mod_') && f.name.endsWith('.json')).map(f => `${dir}/${f.name}`)
+  let files = await list()
+  if (files.length === 0) {
+    await $.store.set(HIDDEN_KEY, (await $.store.get(HIDDEN_KEY)) === true)
+    files = await list()
+  }
+  return files
+}
+
 /** Finds this session's transcript: the path a settings hook was given, else ~/.claude/projects/<slug>/<id>.jsonl. */
 const findTranscript = async ($: $, sessionId: string) => {
   if (transcriptPath && (await $.fs.exists(transcriptPath))) return transcriptPath
-  const configDir =
-    (await $.env.get('CLAUDE_CONFIG_DIR')) ??
-    `${(await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '~'}/.claude`
-  const projects = `${configDir}/projects`
+  const projects = `${await configDir($)}/projects`
   for (const dir of [await $.session.root(), await $.session.cwd()]) {
     const guess = `${projects}/${projectSlug(dir)}/${sessionId}.jsonl`
     if (await $.fs.exists(guess)) return guess
@@ -552,7 +633,9 @@ export const register: Register = on => {
       void refreshMeasure($).then(() => refreshBreakdown($, true))
       await ensureTicker($, await $.clock.now())
     }
-    return { text: isHidden ? 'Usage band hidden; /usage-mod shows it again.' : 'Usage band shown above the prompt.' }
+    // Said as a notification, as the menu says it, rather than as a line in the transcript.
+    $.ui.toast(isHidden ? 'Usage band hidden; /usage-mod shows it again.' : 'Usage band shown.')
+    return {}
   })
 
   // Every settings-hook event names the transcript; the first one tells us where history lives.
@@ -562,6 +645,18 @@ export const register: Register = on => {
   })
   on('classic.Stop', ($, e, next) => {
     transcriptPath = e.transcript_path || transcriptPath
+    return next(e)
+  })
+  // The store's files are watched for the session, so a choice made in another chat shows here at once.
+  on('classic.SessionStart', async ($, e, next) => {
+    transcriptPath = e.transcript_path || transcriptPath
+    const result = await next(e)
+    const files = await findStoreFiles($).catch(() => [])
+    return files.length > 0 ? { ...result, watchPaths: [...(result.watchPaths ?? []), ...files] } : result
+  })
+  on('classic.FileChanged', ($, e, next) => {
+    // Known by name, so a hot reload (which keeps the watch but forgets everything here) still hears it.
+    if (isStoreFile(e.file_path)) void hearStore($).catch(() => undefined)
     return next(e)
   })
   // /model, the picker or the SDK: the band names the new model at once, not after its first reply.
@@ -575,6 +670,7 @@ export const register: Register = on => {
   on('command.run', async ($, e, next) => {
     const result = await next(e)
     void (async () => {
+      await nudgeOthers($)
       await syncModel($)
       await refreshMeasure($)
       await pollLimits($, true)
@@ -584,8 +680,12 @@ export const register: Register = on => {
   })
   // A setting that moves the window or where compaction starts (auto-compact in /config, a settings
   // file edited): counted again once the change is in, so the meter follows it before the next reply.
+  // A setting set here reaches the other chats by a note; a settings file edited reaches each by itself.
   on('config.set', ($, e, next) => {
-    $.clock.after(10, () => void refreshBreakdown($, true))
+    $.clock.after(10, () => {
+      void refreshBreakdown($, true)
+      void nudgeOthers($)
+    })
     return next(e)
   })
   on('classic.ConfigChange', ($, e, next) => {
@@ -778,6 +878,8 @@ export const register: Register = on => {
         } finally {
           isCopying = false
         }
+        // What the copy just read fresh, the other chats read too.
+        void nudgeOthers($)
         const [u, m, b, running, model, now] = await Promise.all([
           read($, usageA),
           read($, measureA),

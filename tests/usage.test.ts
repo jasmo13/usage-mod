@@ -254,7 +254,9 @@ test('the context tile measures against compaction', async ($, on) => {
 })
 
 // A chat that opens with what earlier chats chose, kept in the plugin's store.
-const startWith = async (...[$, on, chosen, usage = () => USAGE]: [...Parameters<TestBody>, Record<string, unknown>, (() => unknown)?]) => {
+const startWith = async (
+  ...[$, on, chosen, usage = () => USAGE, surface = 'terminal']: [...Parameters<TestBody>, Record<string, unknown>, (() => unknown)?, ('terminal' | 'desktop')?]
+) => {
   const clock = mock.clock(on, { now: 1_000 })
   on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
   const stored = new Map(Object.entries(chosen))
@@ -263,13 +265,17 @@ const startWith = async (...[$, on, chosen, usage = () => USAGE]: [...Parameters
     stored.set(e.key, e.value)
     return { value: undefined }
   })
-  on('ui.toast', () => ({ value: undefined }))
+  const toasts: string[] = []
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
   on('session.usage', () => ({ value: usage() as never }))
   on('session.id', () => ({ value: 'later' }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
-  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
-  return { stored, clock }
+  await $.session.start({ cwd: '/proj', surface, isInteractive: true })
+  return { stored, clock, toasts }
 }
 
 test('a fresh install shows the band, its details tucked away', async ($, on) => {
@@ -280,9 +286,10 @@ test('a fresh install shows the band, its details tucked away', async ($, on) =>
   await ui.unmount()
 })
 
-test('the details chosen in one chat open the next', async ($, on) => {
-  const { stored } = await startWith($, on, { details: true })
-  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+for (const surface of ['terminal', 'desktop'] as const)
+  test(`${surface}: the details chosen in one chat open the next`, async ($, on) => {
+  const { stored } = await startWith($, on, { details: true }, undefined, surface)
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
   expect(await ui.find({ text: /^Cache read$/ }), 'the details, open').toBeDefined()
   await ui.press({ key: 'menu' })
   await ui.press({ key: 'details' })
@@ -293,18 +300,85 @@ test('the details chosen in one chat open the next', async ($, on) => {
   await ui.unmount()
 })
 
-test('a band hidden in one chat stays hidden in the next', async ($, on) => {
-  const { stored } = await startWith($, on, { hidden: true })
-  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
-  expect(await ui.find({ text: /Session usage/ }), 'hidden').toBeUndefined()
+for (const surface of ['terminal', 'desktop'] as const)
+  test(`${surface}: a choice made in another chat shows here as soon as the store file changes`, async ($, on) => {
+  const file = 'C:\\Users\\me/.claude/plugins/store/usage-mod_usage-mod-abc.json'
+  on('env.get', (_$, e) => ({ value: e.name === 'USERPROFILE' ? 'C:\\Users\\me' : undefined }))
+  on('fs.list', () => ({ value: [{ name: 'usage-mod_usage-mod-abc.json', kind: 'file' }, { name: 'other_x.json', kind: 'file' }] as never }))
+  on('classic.SessionStart', () => ({}))
+  on('classic.FileChanged', () => ({}))
+  const { stored, clock } = await startWith($, on, {}, undefined, surface)
+  const started = await $.classic.SessionStart({ session_id: 's1', transcript_path: '', cwd: '/proj', hook_event_name: 'SessionStart', source: 'startup' } as never)
+  expect(started.watchPaths, 'the store file, watched').toEqual([file])
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await ui.find({ text: /^Cache read$/ }), 'details tucked away').toBeUndefined()
+  // Another chat opens the details: its write changes the file, which the engine reports, in Windows' spelling.
+  stored.set('details', true)
+  await $.classic.FileChanged({ session_id: 's1', transcript_path: '', cwd: '/proj', hook_event_name: 'FileChanged', file_path: file.replace(/\//g, '\\').toUpperCase(), event: 'change' } as never)
+  await clock.advance(10)
+  expect(await ui.find({ text: /^Cache read$/ }), 'open here before the next tick').toBeDefined()
   await ui.unmount()
-  await $.command.run({ command: 'usage-mod', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
-  expect(stored.get('hidden'), '/usage-mod shows it again, for every chat').toBe(false)
 })
 
-test('a chat already open follows a choice made in another', async ($, on) => {
-  const { stored, clock } = await startWith($, on, {})
-  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+for (const surface of ['terminal', 'desktop'] as const)
+  test(`${surface}: another chat's command or fresh limits show here as soon as the store file changes`, async ($, on) => {
+  const file = 'C:\\Users\\me\\.claude\\plugins\\store\\usage-mod_usage-mod-abc.json'
+  let breakdown = {
+    model: 'claude-opus-5-5', totalTokens: 50_000, rawMaxTokens: 500_000, percentage: 10, autoCompactThreshold: 467_000, isAutoCompactEnabled: true,
+    categories: [{ name: 'Messages', tokens: 50_000, color: 'x', kind: 'used' }], memoryFiles: [], mcpTools: [],
+  }
+  on('classic.FileChanged', () => ({}))
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  const { stored, clock } = await startWith($, on, {}, () => ({ ...USAGE, context: { ...USAGE.context, breakdown } }), surface)
+  await $.session.measure({ context: USAGE.context, rateLimits: USAGE.rateLimits, cost: USAGE.cost, changed: ['context'] })
+  await clock.advance(100)
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
+  const changed = () => $.classic.FileChanged({ session_id: 's1', transcript_path: '', cwd: '/proj', hook_event_name: 'FileChanged', file_path: file, event: 'change' } as never)
+  expect(await ui.find({ text: /^10%$/ }), '50k of 500k').toBeDefined()
+  // Another chat ran /autocompact 300k and left a note.
+  breakdown = { ...breakdown, rawMaxTokens: 300_000, autoCompactThreshold: 267_000 }
+  stored.set('changed', { at: 1_200, by: 'another chat' })
+  await changed()
+  await clock.advance(10)
+  expect(await ui.find({ text: /^17%$/ }), 'against 300k before the next tick').toBeDefined()
+  // Another chat's reply moved the account's limits, and it kept the usage service's answer.
+  stored.set('serviceLimits', { at: 1_200, rateLimits: [{ kind: 'five_hour', percentUsed: 64, resetsAt: '2030-01-01T00:00:00Z' }] })
+  await changed()
+  await clock.advance(10)
+  expect(await ui.find({ text: /^64%$/ }), "the other chat's reading, before this one asks").toBeDefined()
+  await ui.unmount()
+})
+
+for (const surface of ['terminal', 'desktop'] as const)
+  test(`${surface}: a slash command here leaves a note for the other chats`, async ($, on) => {
+  on('command.run', () => ({ text: '' }))
+  const { stored, clock } = await startWith($, on, {}, undefined, surface)
+  await $.command.run({ command: 'login', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+  await clock.advance(10)
+  expect(stored.get('changed'), 'noted, as this chat').toMatchObject({ by: 'later' })
+})
+
+for (const surface of ['terminal', 'desktop'] as const)
+  test(`${surface}: a band hidden in one chat stays hidden in the next`, async ($, on) => {
+  const { stored, toasts } = await startWith($, on, { hidden: true }, undefined, surface)
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await ui.find({ text: /Session usage/ }), 'hidden').toBeUndefined()
+  await ui.unmount()
+  const run = () => $.command.run({ command: 'usage-mod', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+  const shown = await run()
+  expect(stored.get('hidden'), '/usage-mod shows it again, for every chat').toBe(false)
+  expect(shown.text, 'no line in the transcript').toBeUndefined()
+  expect(toasts.at(-1), 'a notification instead').toBe('Usage band shown.')
+  const hidden = await run()
+  expect(stored.get('hidden'), 'and hides it').toBe(true)
+  expect(hidden.text, 'no line in the transcript').toBeUndefined()
+  expect(toasts.at(-1), 'a notification instead').toBe('Usage band hidden; /usage-mod shows it again.')
+})
+
+for (const surface of ['terminal', 'desktop'] as const)
+  test(`${surface}: a chat already open follows a choice made in another`, async ($, on) => {
+  const { stored, clock } = await startWith($, on, {}, undefined, surface)
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
   expect(await ui.find({ text: /^Cache read$/ }), 'no details yet').toBeUndefined()
   stored.set('details', true)
   await clock.advance(1_000)
@@ -313,11 +387,13 @@ test('a chat already open follows a choice made in another', async ($, on) => {
   await clock.advance(1_000)
   expect(await ui.find({ text: /Session usage/ }), 'hidden elsewhere').toBeUndefined()
   await ui.unmount()
-  const hint = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } })
+  const hint = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } })
   expect(await hint.find({ text: /Context window/ }), 'no status line yet').toBeUndefined()
   stored.set('statusLine', true)
   await clock.advance(1_000)
-  expect(await hint.find({ text: /Context window/ }), 'the status line, turned on in another terminal').toBeDefined()
+  // The status line is the terminal's alone; the desktop draws none, whatever is chosen.
+  if (surface === 'terminal') expect(await hint.find({ text: /Context window/ }), 'the status line, turned on in another terminal').toBeDefined()
+  else expect(await hint.find({ text: /Context window/ }), 'no status line on the desktop').toBeUndefined()
   await hint.unmount()
 })
 
@@ -670,7 +746,8 @@ test("the Copy JSON button copies the band's figures, the same on the desktop an
   expect(await copy('desktop'), 'the desktop copies the same').toEqual(json)
 })
 
-test('Copy JSON checks everything again first, and copies what it found', async ($, on) => {
+for (const surface of ['terminal', 'desktop'] as const)
+  test(`${surface}: Copy JSON checks everything again first, and copies what it found`, async ($, on) => {
   let model = 'claude-opus-5-5'
   let usage = { ...USAGE }
   let breakdown = {
@@ -689,8 +766,8 @@ test('Copy JSON checks everything again first, and copies what it found', async 
     copied = e.text
     return { value: { isCopied: true } } as never
   })
-  await startWith($, on, {}, () => ({ ...usage, context: { ...usage.context, breakdown } }))
-  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  const { stored, clock } = await startWith($, on, {}, () => ({ ...usage, context: { ...usage.context, breakdown } }), surface)
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
   // All of it moves after the band last looked, and no tick comes before the press.
   model = 'claude-sonnet-5-5'
   usage = { ...usage, cost: { usd: 2.25 } }
@@ -704,15 +781,18 @@ test('Copy JSON checks everything again first, and copies what it found', async 
   expect(json.band.contextWindow.window, 'the window now').toBe(300_000)
   expect(json.breakdown.detail, 'counted exactly').toBe('full')
   expect(json.band.sessionLimit.percent, "the usage service's answer now").toBe(64)
+  await clock.advance(10)
+  expect(stored.get('changed'), 'and the other chats are told').toMatchObject({ by: 'later' })
   await ui.unmount()
 })
 
-test('the band names a model as soon as it is switched to, before its first reply', async ($, on) => {
+for (const surface of ['terminal', 'desktop'] as const)
+  test(`${surface}: the band names a model as soon as it is switched to, before its first reply`, async ($, on) => {
   let model = 'claude-opus-5-5'
   on('session.model', () => ({ value: model }))
   on('classic.PostModelSwitch', () => ({}))
-  const { clock } = await startWith($, on, {})
-  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  const { clock } = await startWith($, on, {}, undefined, surface)
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
   expect(await ui.find({ text: /Opus 5\.5/ }), 'the model the chat started on').toBeDefined()
   // /model or the picker.
   model = 'claude-sonnet-5-5'
@@ -735,7 +815,8 @@ test('the band names a model as soon as it is switched to, before its first repl
   await ui.unmount()
 })
 
-test('a smaller window or a new auto-compact setting moves the meter at once, details hidden', async ($, on) => {
+for (const surface of ['terminal', 'desktop'] as const)
+  test(`${surface}: a smaller window or a new auto-compact setting moves the meter at once, details hidden`, async ($, on) => {
   let model = 'claude-opus-5-5'
   let breakdown = {
     model, totalTokens: 50_000, rawMaxTokens: 200_000, percentage: 25, autoCompactThreshold: 167_000, isAutoCompactEnabled: true,
@@ -745,10 +826,10 @@ test('a smaller window or a new auto-compact setting moves the meter at once, de
   on('classic.PostModelSwitch', () => ({}))
   on('config.set', (_$, e) => ({ value: e.value }))
   on('session.measure', (_$, e) => ({ changed: e.changed }))
-  const { clock } = await startWith($, on, {}, () => ({ ...USAGE, context: { ...USAGE.context, breakdown } }))
+  const { clock } = await startWith($, on, {}, () => ({ ...USAGE, context: { ...USAGE.context, breakdown } }), surface)
   await $.session.measure({ context: USAGE.context, rateLimits: USAGE.rateLimits, cost: USAGE.cost, changed: ['context'] })
   await clock.advance(100)
-  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
   expect(await ui.find({ text: /^Cache read$/ }), 'details hidden').toBeUndefined()
   expect(await ui.find({ text: /^25%$/ }), '50k of 200k').toBeDefined()
   // A model with a 100k window, compacting at 80k.
@@ -766,17 +847,18 @@ test('a smaller window or a new auto-compact setting moves the meter at once, de
   await ui.unmount()
 })
 
-test('/autocompact moves the meter at once, and a change no hook hears within a second', async ($, on) => {
+for (const surface of ['terminal', 'desktop'] as const)
+  test(`${surface}: /autocompact moves the meter at once, and a change no hook hears within a second`, async ($, on) => {
   let breakdown = {
     model: 'claude-opus-5-5', totalTokens: 50_000, rawMaxTokens: 500_000, percentage: 10, autoCompactThreshold: 467_000, isAutoCompactEnabled: true,
     categories: [{ name: 'Messages', tokens: 50_000, color: 'x', kind: 'used' }], memoryFiles: [], mcpTools: [],
   }
   on('command.run', () => ({ text: '' }))
   on('session.measure', (_$, e) => ({ changed: e.changed }))
-  const { clock } = await startWith($, on, {}, () => ({ ...USAGE, context: { ...USAGE.context, breakdown } }))
+  const { clock } = await startWith($, on, {}, () => ({ ...USAGE, context: { ...USAGE.context, breakdown } }), surface)
   await $.session.measure({ context: USAGE.context, rateLimits: USAGE.rateLimits, cost: USAGE.cost, changed: ['context'] })
   await clock.advance(100)
-  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
   expect(await ui.find({ text: /^10%$/ }), '50k of 500k').toBeDefined()
   // /autocompact 300k
   breakdown = { ...breakdown, rawMaxTokens: 300_000, autoCompactThreshold: 267_000 }
@@ -790,12 +872,13 @@ test('/autocompact moves the meter at once, and a change no hook hears within a 
   await ui.unmount()
 })
 
-test('any slash command brings the band up to date as soon as it finishes', async ($, on) => {
+for (const surface of ['terminal', 'desktop'] as const)
+  test(`${surface}: any slash command brings the band up to date as soon as it finishes`, async ($, on) => {
   let model = 'claude-opus-5-5'
   on('session.model', () => ({ value: model }))
   on('command.run', () => ({ text: '' }))
-  const { clock } = await startWith($, on, {})
-  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  const { clock } = await startWith($, on, {}, undefined, surface)
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
   expect(await ui.find({ text: /Opus 5\.5/ }), 'the model the chat started on').toBeDefined()
   // A command no hook of the band's knows about switches the model, with no switch event.
   model = 'claude-sonnet-5-5'

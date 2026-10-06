@@ -12,7 +12,7 @@ The top of the band has three meters, each an orange bar with its percentage. Th
 | **Session limit** | How much of your plan's 5-hour limit you've used, and the time left until it resets | Resets in 2 hr 37 min · 13% |
 | **Weekly · all models** | How much of your weekly limit you've used, and the day and time it resets, in your local time | Resets Wed 4:00 AM · 12% |
 
-The model next to the band's name, and the Context window's size and auto-compact point, follow a switch with `/model` or the model picker straight away, before the new model's first reply. After any slash command (`/autocompact`, `/config`, `/fast`, `/compact`, `/clear` and the rest) the band reads the model, cost, context, window and limits again as soon as the command finishes, and a change in a settings file shows straight away too. Cost, context, the model and the window are also read every second, so a change made any other way shows within a second.
+The model next to the band's name, and the Context window's size and auto-compact point, follow a switch with `/model` or the model picker straight away, before the new model's first reply. After any slash command (`/autocompact`, `/config`, `/fast`, `/compact`, `/clear` and the rest) the band reads the model, cost, context, window and limits again as soon as the command finishes, and a change in a settings file shows straight away too. Other open chats, desktop or terminal, follow at once too: a slash command, a setting changed in `/config` or **Copy JSON** in one chat tells the others to read everything again. Cost, context, the model and the window are also read every second, so a change made any other way shows within a second.
 
 Reset times are rounded to the nearest minute, and the time left for the session limit counts a partial minute as a whole one, as the app does. The meters, and the details under them, share the band's full width, out to its right edge. When the band is too narrow for the full wording beside a meter's name, the wording moves to a line under the bar, and on very narrow bands it shortens ("2 hr 37 min", "Weekly").
 
@@ -37,7 +37,7 @@ The band's figures are meant to match the app's usage panel exactly:
 
 ### Where the limits come from
 
-When you're signed in with a Claude account, the band asks Anthropic's usage service for your current limits, the same figures the app shows. It does this every 15 seconds, and again about 5 seconds after each reply. Open chats share one answer, so having several open doesn't multiply the requests.
+When you're signed in with a Claude account, the band asks Anthropic's usage service for your current limits, the same figures the app shows. It does this every 15 seconds, and again about 5 seconds after each reply. Open chats share one answer, so having several open doesn't multiply the requests, and every open chat shows a new answer the moment any of them gets it: a reply in one chat moves the limits in all of them.
 
 The limits also arrive with each of Claude's replies, and the band shows whichever reading is newest. If the usage service's last answer is more than a minute old and a reply has brought a newer reading since, the band shows the reply's. While the service isn't answering, the band asks less often: after 30 seconds, then a minute, and so on up to every 5 minutes.
 
@@ -50,9 +50,9 @@ A new chat shows the last reading it saw until fresh numbers arrive. Without a C
   - **Copy JSON** (`c`) copies everything the band knows about this chat. It checks everything again first, then copies once all of it is current: the model, cost and context, your limits straight from Anthropic's usage service, an exact count of the context, and the chat's history if that's still loading. So it can take a moment. It opens with `band`: what the band shows, under the band's own names (`contextWindow`, `sessionLimit`, `weeklyLimit`, `compactionBuffer`, `freeSpace` and so on), as whole numbers rather than "60.8k". Its percentages are the band's, including the Context window's. The raw figures follow, with the limits under the same names, and the turns include the prompt that started each one.
   - **Show status line** / **Hide status line** (`s`), in the terminal only: a line of its own under the hint line below the prompt with what the band shows, so it can stand in for the band when the band is hidden. For example: `$0.26 · 61.1k tokens · Context window: 20% (205.9k until auto-compact) · Session limit: 16% (resets in 1 hr 56 min) · Weekly limit: 12% (resets Wed 4:00 AM)`. The cost is in orange, the dots and the notes in parentheses in gray. In a narrower terminal it condenses to fit, a step at a time: shorter notes (`205.9k left`, `1 hr 56 min`, `Wed 4:00 AM`), then shorter names (`Context`, `Session`, `Weekly`), then no notes, then no token count. It's off until you choose it. The desktop app doesn't draw that line, so its menu leaves this out.
   - **Hide band** (`h`)
-- `/usage-mod` shows or hides the band.
+- `/usage-mod` shows or hides the band, saying which in a notification.
 
-Every choice here is kept for every chat, new or old, until you change it again. Chats already open, whether desktop chats or other terminals, follow the change within a second. A fresh install shows the band with its details hidden and, in the terminal, no status line.
+Every choice here is kept for every chat, new or old, until you change it again. Chats already open, whether desktop chats or other terminals, follow the change at once. A fresh install shows the band with its details hidden and, in the terminal, no status line.
 
 ## Installing
 
