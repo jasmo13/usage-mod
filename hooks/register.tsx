@@ -44,10 +44,10 @@ const toMeasure = (
   contextTokens: u.context.tokens,
   contextWindow: u.context.window,
   contextPercent: u.context.percent,
-  // The usage service's reading wins once it answers; until then a reply's, and
+  // The usage service's reading wins while it is fresh; otherwise a reply's, and
   // before this chat's first reply the last one kept (this chat's, or another's).
   rateLimits:
-    !fromService && u.rateLimits.length > 0
+    isReplyNewest(at) && u.rateLimits.length > 0
       ? u.rateLimits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt }))
       : liveLimits(previous?.rateLimits ?? [], at),
 })
@@ -89,10 +89,30 @@ const SHARE_MS = 14_000
 /** After a turn, ask again sooner, but never more than this often. */
 const MIN_POLL_MS = 5_000
 const SERVICE_KEY = 'serviceLimits'
-// Whether the service has answered this load; while it has, replies' readings are not drawn.
+/** When it stops answering, ask less often, doubling up to this. */
+const MAX_POLL_MS = 300_000
+/** A service reading older than this gives way to a newer one from a reply. */
+const STALE_MS = 60_000
+// Whether the service has answered this load, and when the reading shown was taken.
 let fromService = false
-// When this load last asked (or took another chat's answer).
+let serviceAt = 0
+// When this load last asked (or took another chat's answer), and how long until it asks again.
 let polledAt = 0
+let pollGap = POLL_MS
+// Replies' last reading, and when it changed: 0 while it is the one found at load, whose age is unknown.
+let replyText: string | undefined
+let replyAt = 0
+
+/** Notes a reading from replies, so a newer one can take over from a stale service reading. */
+const noteReply = (rows: readonly RateLimitRow[], now: number) => {
+  if (rows.length === 0) return
+  const text = JSON.stringify(rows.map(l => [l.kind, l.percentUsed, l.resetsAt]))
+  if (replyText !== undefined && text !== replyText) replyAt = now
+  replyText = text
+}
+
+/** Whether replies' reading is the one to show: no service answer, or a stale one with a newer reply since. */
+const isReplyNewest = (now: number) => !fromService || (now - serviceAt > STALE_MS && replyAt > serviceAt)
 
 /**
  * Brings the 5-hour and 7-day meters up to the usage service's figures: from
@@ -102,30 +122,36 @@ let polledAt = 0
  */
 const pollLimits = async ($: $, isAfterTurn = false) => {
   const now = await $.clock.now()
-  if (now - polledAt < (isAfterTurn ? MIN_POLL_MS : POLL_MS)) return
+  if (now - polledAt < (isAfterTurn && pollGap === POLL_MS ? MIN_POLL_MS : pollGap)) return
   polledAt = now
   let rows: RateLimitRow[] | undefined
+  let takenAt = now
   if (!isAfterTurn) {
     const shared = (await $.store.get(SERVICE_KEY).catch(() => undefined)) as { at?: number; rateLimits?: RateLimitRow[] } | undefined
-    if (shared?.at !== undefined && now - shared.at < SHARE_MS && Array.isArray(shared.rateLimits)) rows = shared.rateLimits
+    if (shared?.at !== undefined && now - shared.at < SHARE_MS && Array.isArray(shared.rateLimits)) {
+      rows = shared.rateLimits
+      takenAt = shared.at
+    }
   }
   if (!rows) {
     const auth = await $.session.authorize().catch(() => null)
     if (!auth) return
+    const failed = (why: string) => {
+      pollGap = Math.min(pollGap * 2, MAX_POLL_MS)
+      $.ui.log(`session-usage: usage service ${why}; asking again in ${pollGap / 1000}s`, { to: 'debug' })
+    }
     try {
       const res = await $.http.fetch(USAGE_URL, { auth: auth.handle, headers: { 'anthropic-beta': 'oauth-2025-04-20' } })
       rows = res.ok ? parseUsage(res.text) : []
-      if (rows.length === 0) {
-        $.ui.log(`session-usage: usage service gave no limits (HTTP ${res.status})`, { to: 'debug' })
-        return
-      }
+      if (rows.length === 0) return failed(`gave no limits (HTTP ${res.status})`)
     } catch (error) {
-      $.ui.log(`session-usage: usage service unavailable (${String(error).slice(0, 120)})`, { to: 'debug' })
-      return
+      return failed(`unavailable (${String(error).slice(0, 120)})`)
     }
+    pollGap = POLL_MS
     await $.store.set(SERVICE_KEY, { at: now, rateLimits: rows }).catch(() => undefined)
   }
   fromService = true
+  serviceAt = takenAt
   const live = liveLimits(rows, now)
   await update($, measureA, was => (was ? { ...was, rateLimits: live } : was))
   await rememberLimits($, live)
@@ -135,8 +161,10 @@ const pollLimits = async ($: $, isAfterTurn = false) => {
 let showStatus = true
 // Where the transcript is, once a settings-hook event has said; a guess until then.
 let transcriptPath: string | undefined
-// When the context breakdown was last counted; it is heavier than the rest, so it runs at most every few seconds.
+// When the context breakdown was last counted, whether a count is running, and whether another is owed once it ends.
 let breakdownAt = 0
+let isCounting = false
+let isOwed = false
 // The refresh timer, and when it last fired: a draw that finds it stale starts it again.
 let ticker: { cancel: () => void } | undefined
 let tickedAt = 0
@@ -148,8 +176,9 @@ const pushStatus = async ($: $) => {
 
 const refreshMeasure = async ($: $) => {
   const [u, now, prev] = await Promise.all([$.session.usage(), $.clock.now(), read($, measureA)])
+  noteReply(u.rateLimits, now)
   await update($, measureA, () => toMeasure(now, u, prev))
-  if (!fromService) await rememberLimits($, u.rateLimits)
+  if (isReplyNewest(now)) await rememberLimits($, u.rateLimits)
   if (!hasRecalled) {
     hasRecalled = true
     await recallLimits($).catch(() => undefined)
@@ -157,12 +186,34 @@ const refreshMeasure = async ($: $) => {
   return u
 }
 
-const refreshBreakdown = async ($: $, detail: 'summary' | 'full') => {
+/**
+ * The context breakdown is counted exactly, as the app's panel and /context
+ * count it: the quick estimate gets the total right but splits it between
+ * categories loosely. An exact count asks the token-count service, so it runs
+ * when something changed (a load, a turn, a compaction, the details opening)
+ * and otherwise at most every half minute while the details are open.
+ */
+const BREAKDOWN_MS = 30_000
+
+const refreshBreakdown = async ($: $, isForced = false) => {
+  const now = await $.clock.now()
+  if (isCounting) {
+    isOwed ||= isForced
+    return
+  }
+  if (!isForced && now - breakdownAt < BREAKDOWN_MS) return
+  isCounting = true
+  breakdownAt = now
   try {
-    const u = await $.session.usage({ breakdown: detail })
+    let detail: 'summary' | 'full' = 'full'
+    let u = await $.session.usage({ breakdown: 'full' }).catch(() => undefined)
+    if (!u?.context.breakdown) {
+      // The exact count failed (offline, say): the estimate beats an empty section.
+      detail = 'summary'
+      u = await $.session.usage({ breakdown: 'summary' })
+    }
     const b = u.context.breakdown
     if (!b) return
-    const now = await $.clock.now()
     const next: Breakdown = {
       at: now,
       detail,
@@ -180,22 +231,24 @@ const refreshBreakdown = async ($: $, detail: 'summary' | 'full') => {
     await update($, breakdownA, () => next)
   } catch (error) {
     $.ui.log(`session-usage: context breakdown unavailable (${String(error)})`, { to: 'debug' })
+  } finally {
+    isCounting = false
+    if (isOwed) {
+      isOwed = false
+      void refreshBreakdown($, true)
+    }
   }
 }
 
 /**
  * Brings cost, context and limits up to the moment, and the context breakdown
- * when it is a few seconds old: called on every request, tool result and turn.
+ * while the details show it: called on every request, tool result and turn.
  */
 const syncLive = async ($: $) => {
   await refreshMeasure($).catch(() => undefined)
   await pollLimits($).catch(() => undefined)
   await pushStatus($)
-  const now = await $.clock.now()
-  if (now - breakdownAt >= 4000) {
-    breakdownAt = now
-    await refreshBreakdown($, 'summary')
-  }
+  if (await read($, expandedA)) await refreshBreakdown($)
 }
 
 /** How often the band redraws; cost, context and limits are read every other tick. */
@@ -409,7 +462,7 @@ export const register: Register = (on, options) => {
     // Work that may take a while runs off the session's start.
     $.clock.after(50, () => {
       void backfill($).catch(error => $.ui.log(`session-usage: history not loaded (${String(error)})`, { to: 'debug' }))
-      void refreshBreakdown($, 'summary')
+      void refreshBreakdown($, true)
     })
     await startTicker($)
     return result
@@ -421,7 +474,7 @@ export const register: Register = (on, options) => {
     await update($, expandedA, () => false)
     await update($, menuA, () => false)
     if (!isHidden) {
-      void refreshMeasure($).then(() => refreshBreakdown($, 'summary'))
+      void refreshMeasure($).then(() => refreshBreakdown($, true))
       await ensureTicker($, await $.clock.now())
     }
     return { text: isHidden ? 'Usage band hidden; /session-usage shows it again.' : 'Usage band shown above the prompt.' }
@@ -485,8 +538,10 @@ export const register: Register = (on, options) => {
       return finishTurn(m, e.turnId, { durationMs: e.durationMs, reason: e.reason, costUsd })
     })
     await pushStatus($)
-    breakdownAt = 0
-    $.clock.after(10, () => void syncLive($).then(() => pollLimits($, true)))
+    $.clock.after(10, () => {
+      void syncLive($).then(() => pollLimits($, true))
+      void refreshBreakdown($, true)
+    })
     return result
   })
 
@@ -509,8 +564,9 @@ export const register: Register = (on, options) => {
 
   on('session.measure', async ($, e, next) => {
     const now = await $.clock.now()
+    noteReply(e.rateLimits, now)
     await update($, measureA, prev => toMeasure(now, e, prev))
-    if (!fromService) await rememberLimits($, e.rateLimits)
+    if (isReplyNewest(now)) await rememberLimits($, e.rateLimits)
     await pushStatus($)
     return next(e)
   })
@@ -524,7 +580,7 @@ export const register: Register = (on, options) => {
         const withRow = addCompaction(m, { t: now, trigger: e.trigger, before: result.tokensBefore, after: result.tokensAfter })
         return usage ? addRequest(withRow, { t: now, model: 'compaction', agentId: e.agentId, tokens: tokensOf(usage), stop: null }) : withRow
       })
-      $.clock.after(10, () => void refreshBreakdown($, 'summary'))
+      $.clock.after(10, () => void refreshBreakdown($, true))
     }
     return result
   })
@@ -576,7 +632,7 @@ export const register: Register = (on, options) => {
       onExpand: async () => {
         await update($, menuA, () => false)
         const isOpen = await update($, expandedA, was => !was)
-        if (isOpen) void refreshBreakdown($, 'summary')
+        if (isOpen) void refreshBreakdown($, true)
       },
       onHide: async () => {
         await update($, menuA, () => false)

@@ -339,10 +339,13 @@ export const projectSlug = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, '-')
 
 /* ---------- formatting ---------- */
 
+/** One decimal, a whole one dropped: "134.5k", "33k", "62.4M", as the app writes them. */
+const oneDecimal = (n: number) => n.toFixed(1).replace(/\.0$/, '')
+
 export const fmtTokens = (n: number) => {
-  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`
-  if (n >= 1e6) return `${(n / 1e6).toFixed(n >= 1e7 ? 1 : 2)}M`
-  if (n >= 1e3) return `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k`
+  if (n >= 999_950_000) return `${oneDecimal(n / 1e9)}B`
+  if (n >= 999_950) return `${oneDecimal(n / 1e6)}M`
+  if (n >= 999.5) return `${oneDecimal(n / 1e3)}k`
   return `${Math.round(n)}`
 }
 
@@ -382,4 +385,4 @@ export const shortModel = (id: string) =>
     .replace(/\[.*\]$/, '')
 
 export const rateLabel = (kind: string) =>
-  kind === 'five_hour' ? '5-hour' : kind === 'seven_day' ? '7-day' : kind === 'spend_limit' ? 'Spend' : kind.replace(/_/g, ' ')
+  kind === 'five_hour' ? 'Session' : kind === 'seven_day' ? 'Weekly' : kind === 'spend_limit' ? 'Spend' : kind.replace(/_/g, ' ')

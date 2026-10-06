@@ -7,7 +7,7 @@ A Claude Code plugin that shows a live usage band above the prompt. It works in 
 The top of the band has three meters, each an orange bar with its percentage:
 
 - **Context window**: how full this chat's context is.
-- **5-hour limit** and **7-day limit**: how much of your plan's usage limits you've used, with the time left until each one resets.
+- **Session limit** and **Weekly · all models**: how much of your plan's 5-hour and weekly usage limits you've used. As in the app's panel, the session limit shows the time left until it resets, and the weekly limit shows the day and time it resets.
 
 Choose **Show details** to see more:
 
