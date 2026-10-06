@@ -350,7 +350,8 @@ export const fmtTokens = (n: number) => {
 }
 
 export const fmtUsd = (n: number | undefined) =>
-  n === undefined ? '—' : n >= 100 ? `$${n.toFixed(0)}` : n >= 1 ? `$${n.toFixed(2)}` : `$${n.toFixed(3)}`
+  // Whole cents below $100: a bill is never a fraction of one.
+  n === undefined ? '—' : n >= 100 ? `$${n.toFixed(0)}` : `$${n.toFixed(2)}`
 
 export const fmtMs = (ms: number) => {
   if (ms < 1000) return `${Math.round(ms)}ms`

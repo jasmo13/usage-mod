@@ -657,13 +657,44 @@ export const band = (ctx: Ctx): RenderElement => {
   return <Box flexDirection="column">{kept}</Box>
 }
 
-/** The one-line summary the status line shows. */
-export const statusText = (u: UsageModel, m: Measure | null, b: Breakdown | null) => {
-  const parts = [fmtUsd(m?.costUsd), `${fmtTokens(sumTokens(u.totals))} tok`]
+/**
+ * The status line's parts, the cost first: what the band shows, on one line,
+ * for a terminal that keeps the line and hides the band. A part's note goes in parentheses after it.
+ */
+const statusParts = (u: UsageModel, m: Measure | null, b: Breakdown | null, now: number) => {
+  const parts: { text: string; note?: string }[] = [
+    // Whole cents: a bill is never a fraction of one.
+    { text: m?.costUsd === undefined ? '—' : `$${m.costUsd.toFixed(2)}` },
+    { text: `${fmtTokens(sumTokens(u.totals))} tokens` },
+  ]
   // Against the same window as the band's Context window meter, once the breakdown has counted it.
   const c = compaction(m, b)
-  if (c) parts.push(`ctx ${wholePct(c.pct)}`)
-  else if (m?.contextPercent !== undefined) parts.push(`ctx ${fmtPct(m.contextPercent)}`)
-  for (const l of m?.rateLimits ?? []) parts.push(`${rateLabel(l.kind)} ${wholePct(l.percentUsed)}`)
-  return parts.join(' · ')
+  if (c) parts.push({ text: `Context window: ${wholePct(c.pct)}`, note: `${fmtTokens(c.left)} ${c.at ? 'until auto-compact' : 'left'}` })
+  else if (m?.contextPercent !== undefined) parts.push({ text: `Context window: ${fmtPct(m.contextPercent)}` })
+  for (const l of m?.rateLimits ?? []) {
+    const reset = fmtReset(l.kind, l.resetsAt, now)[0]
+    // Named in full; the band's "Weekly · all models" would read as two parts between the line's dots.
+    parts.push({ text: `${rateLabel(l.kind)} limit: ${wholePct(l.percentUsed)}`, note: reset && `${reset[0]!.toLowerCase()}${reset.slice(1)}` })
+  }
+  return parts
+}
+
+/** The one-line summary the status line shows. */
+export const statusText = (u: UsageModel, m: Measure | null, b: Breakdown | null, now: number) =>
+  statusParts(u, m, b, now).map(p => (p.note ? `${p.text} (${p.note})` : p.text)).join(' · ')
+
+/** The same summary drawn for the terminal: the cost in the band's orange, the dots and notes gray, the rest in the text color. */
+export const statusLine = (T: Base, u: UsageModel, m: Measure | null, b: Breakdown | null, now: number) => {
+  const { Text } = T
+  const [cost, ...rest] = statusParts(u, m, b, now)
+  return (
+    <Text wrap="truncate">
+      <Text color={P.ember.hex}>{cost!.text}</Text>
+      {rest.map((p, i) => [
+        <Text key={`dot${i}`} dimColor>{' · '}</Text>,
+        p.text,
+        p.note ? <Text key={`note${i}`} dimColor>{` (${p.note})`}</Text> : null,
+      ])}
+    </Text>
+  )
 }

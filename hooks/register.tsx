@@ -16,7 +16,7 @@ import {
   tokensOf,
   transcriptFolder,
 } from './collect'
-import { band, statusText } from './views'
+import { band, statusLine } from './views'
 
 /** Bumped when the transcript parser changes, so history is read again. */
 const BACKFILL_VERSION = 2
@@ -262,7 +262,8 @@ const startTicker = async ($: $) => {
     ticks += 1
     void (async () => {
       tickedAt = await $.clock.now()
-      if (await read($, hiddenA)) return
+      // A hidden band with the status line off has nothing to keep fresh; the line alone still counts down.
+      if ((await read($, hiddenA)) && !(await read($, statusA))) return
       if (ticks % 2 === 0) await syncLive($)
       $.ui.invalidate('ui.render')
     })().catch(error => $.ui.log(`usage-mod: refresh failed (${String(error)})`, { to: 'debug' }))
@@ -588,13 +589,20 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The status line rides at the end of the dim hint line under the prompt, which only the terminal draws.
+  // The status line: a line of its own under the hint line below the prompt, which only the terminal draws.
   // ($.ui.status would pin it among the engine's notices, under a warning sign.)
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
     if (e.surface !== 'terminal' || !(await read($, statusA))) return next(e)
-    const [usage, measure, breakdown] = await Promise.all([read($, usageA), read($, measureA), read($, breakdownA)])
-    const text = statusText(usage as UsageModel, measure as Measure | null, breakdown as Breakdown | null)
-    return next({ ...e, props: { ...e.props, tail: e.props.tail ? `${e.props.tail} · ${text}` : ` · ${text}` } })
+    const [usage, measure, breakdown, now] = await Promise.all([read($, usageA), read($, measureA), read($, breakdownA), $.clock.now()])
+    const T = $.ui.resolve(e)
+    // The engine's own line stays as it draws it, its pills live; the terminal draws it first, whatever the order here.
+    const hint = await next(e)
+    return (
+      <T.Box flexDirection="column">
+        {hint}
+        {statusLine(T, usage as UsageModel, measure as Measure | null, breakdown as Breakdown | null, now)}
+      </T.Box>
+    )
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

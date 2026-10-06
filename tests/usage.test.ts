@@ -76,12 +76,8 @@ test('a desktop prompt keeps its words when the app prepends a reminder', async 
 
 test('live events fill the band on the terminal and the desktop', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000 })
-  // What the engine draws once the band passes, and its toasts; the hint line's tail as the engine is handed it.
-  const tails: (string | undefined)[] = []
-  on('ui.render', (_$, e) => {
-    if (e.component === 'PromptHint') tails.push(e.props.tail)
-    return h(_$.ui.resolve(e).Box, {}) as RenderElement
-  })
+  // What the engine draws once the band passes, and its toasts.
+  on('ui.render', (_$, e) => h(_$.ui.resolve(e).Box, {}) as RenderElement)
   on('ui.toast', () => ({ value: undefined }))
   on('session.usage', () => ({ value: USAGE }))
   on('session.measure', (_$, e) => ({ changed: e.changed }))
@@ -120,16 +116,18 @@ test('live events fill the band on the terminal and the desktop', async ($, on) 
   await $.session.measure({ context: USAGE.context, rateLimits: USAGE.rateLimits, cost: USAGE.cost, changed: ['cost'] })
 
   const HINT = { isDraft: false, isWorking: false, hint: '? for shortcuts' }
-  const hintTail = async (surface: 'terminal' | 'desktop') => {
+  // The summary's own line over the hint line, if one is drawn.
+  const statusLine = async (surface: 'terminal' | 'desktop') => {
     const hint = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'PromptHint', props: HINT })
+    const found = await hint.find({ text: /tokens · Context window:/ })
     await hint.unmount()
-    return tails.at(-1)
+    return found?.text
   }
-  expect(await hintTail('terminal'), 'the status line is off until chosen').toBeUndefined()
+  expect(await statusLine('terminal'), 'the status line is off until chosen').toBeUndefined()
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: BAND_PROPS })
-    expect(await ui.find({ text: /\$0\.500/ }), `${surface}: cost`).toBeDefined()
+    expect(await ui.find({ text: /\$0\.50(?!\d)/ }), `${surface}: cost, in whole cents`).toBeDefined()
     expect(await ui.find({ text: /^42.5k$/ }), `${surface}: tokens`).toBeDefined()
     expect(await ui.find({ text: /^Session limit$/ }), `${surface}: rate limit`).toBeDefined()
     const svgs = await ui.findAll({ type: 'Svg' })
@@ -162,13 +160,21 @@ test('live events fill the band on the terminal and the desktop', async ($, on) 
   await ui.press({ key: 'menu' })
   expect(await ui.find({ text: /^Show status line$/ })).toBeDefined()
   await ui.press({ key: 'status' })
-  expect(await hintTail('terminal'), 'at the end of the hint line').toBe(' · $0.500 · 42.5k tok · ctx 25% · Session 13%')
-  expect(await hintTail('desktop'), 'the desktop draws no tail').toBeUndefined()
+  // With when each limit resets, so the line stands without the band.
+  expect(await statusLine('terminal'), 'a line of its own').toMatch(/^\$0\.50 · 42\.5k tokens · Context window: 25% · Session limit: 13% \(resets in \d+ hr( \d+ min)?\)$/)
+  expect(await statusLine('desktop'), 'the desktop draws none').toBeUndefined()
+  // The cost in the band's orange, the dots and the notes gray, the rest in the text color.
+  const hint = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'PromptHint', props: HINT })
+  expect((await hint.find({ text: /^\$0\.50$/ }))?.props.color, 'the cost').toBe('#D97757')
+  expect((await hint.find({ text: /42\.5k tokens/ }))?.props.color, 'the rest').toBeUndefined()
+  expect((await hint.find({ text: /^ · $/ }))?.props.dimColor, 'the dots').toBe(true)
+  expect((await hint.find({ text: /^ \(resets in / }))?.props.dimColor, 'the notes').toBe(true)
+  await hint.unmount()
   expect(stored.get('statusLine'), 'the choice is kept for the next chat').toBe(true)
   await ui.press({ key: 'menu' })
   expect(await ui.find({ text: /^Hide status line$/ })).toBeDefined()
   await ui.press({ key: 'status' })
-  expect(await hintTail('terminal'), 'cleared').toBeUndefined()
+  expect(await statusLine('terminal'), 'cleared').toBeUndefined()
   expect(statuses, 'never pinned among the engine’s notices').toHaveLength(0)
   expect(stored.get('statusLine')).toBe(false)
   await ui.press({ key: 'menu' })
@@ -425,6 +431,8 @@ test('the status line measures context against the same window as the band', asy
   const measure = { at: 0, costUsd: 0.256, contextTokens: 61_078, contextPercent: 6.1, rateLimits: [] } as unknown as Measure
   const breakdown = { at: 0, detail: 'full', model: 'claude-opus-5-5', totalTokens: 61_078, rawMaxTokens: 300_000, percentage: 20, autoCompactThreshold: 267_000, isAutoCompactEnabled: true, categories: [], memoryFiles: [], mcpTools: [], skills: [] } as Breakdown
   // The band's Context window meter reads 20% of 300k; the status line said "ctx 6.0%" against a larger window.
-  expect(statusText(emptyModel(), measure, breakdown)).toContain('ctx 20%')
-  expect(statusText(emptyModel(), measure, null), 'before the breakdown is counted').toContain('ctx 6.1%')
+  expect(statusText(emptyModel(), measure, breakdown, 0)).toContain('Context window: 20% (205.9k until auto-compact)')
+  expect(statusText(emptyModel(), measure, null, 0), 'before the breakdown is counted').toContain('Context window: 6.1%')
+  // Whole cents: a bill is never a fraction of one.
+  expect(statusText(emptyModel(), measure, breakdown, 0)).toMatch(/^\$0\.26 · /)
 })
