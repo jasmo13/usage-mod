@@ -253,6 +253,22 @@ const syncLive = async ($: $) => {
 const TICK_MS = 1000
 
 /**
+ * The choices made in any chat, kept for every chat: a fresh install shows the band, its details tucked away,
+ * and no status line. Read again each tick, so a chat already open (the desktop keeps several) follows a change made in another.
+ */
+const syncChoices = async ($: $) => {
+  const chosen = async (key: string) => (await $.store.get(key).catch(() => undefined)) === true
+  const [isStatusShown, isExpanded, isHidden] = await Promise.all([chosen(STATUS_KEY), chosen(DETAILS_KEY), chosen(HIDDEN_KEY)])
+  // Written only on a change, so the band draws again only when one came from elsewhere.
+  if ((await read($, statusA)) !== isStatusShown) await update($, statusA, () => isStatusShown)
+  if ((await read($, hiddenA)) !== isHidden) await update($, hiddenA, () => isHidden)
+  if ((await read($, expandedA)) !== isExpanded) {
+    await update($, expandedA, () => isExpanded)
+    if (isExpanded) void refreshBreakdown($, true)
+  }
+}
+
+/**
  * Keeps the band in step with the chat whether or not anything is happening
  * (durations, countdowns, cost and context all move between events). Replaces
  * any timer already running, so a new chat or a restart never runs two.
@@ -265,6 +281,7 @@ const startTicker = async ($: $) => {
     ticks += 1
     void (async () => {
       tickedAt = await $.clock.now()
+      await syncChoices($)
       // A hidden band with the status line off has nothing to keep fresh; the line alone still counts down.
       if ((await read($, hiddenA)) && !(await read($, statusA))) return
       if (ticks % 2 === 0) await syncLive($)
@@ -447,12 +464,7 @@ export const register: Register = on => {
       await update($, backfillA, () => ({ status: 'pending', liveSince, version: BACKFILL_VERSION }) as Backfill)
       await update($, menuA, () => false)
     }
-    // The choices made in any chat, kept for every chat; a fresh install shows the band, its details tucked away, and no status line.
-    const chosen = async (key: string) => (await $.store.get(key).catch(() => undefined)) === true
-    const [isStatusShown, isExpanded, isHidden] = await Promise.all([chosen(STATUS_KEY), chosen(DETAILS_KEY), chosen(HIDDEN_KEY)])
-    await update($, statusA, () => isStatusShown)
-    await update($, expandedA, () => isExpanded)
-    await update($, hiddenA, () => isHidden)
+    await syncChoices($)
     try {
       const m = await $.session.model()
       await update($, modelA, () => m)
