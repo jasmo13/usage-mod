@@ -9,6 +9,7 @@ import {
   emptyModel,
   finishTurn,
   liveLimits,
+  parseUsage,
   projectSlug,
   startTurn,
   sumTokens,
@@ -43,9 +44,10 @@ const toMeasure = (
   contextTokens: u.context.tokens,
   contextWindow: u.context.window,
   contextPercent: u.context.percent,
-  // Until this chat's first reply brings a reading, the last one (this chat's, or another's) stands.
+  // The usage service's reading wins once it answers; until then a reply's, and
+  // before this chat's first reply the last one kept (this chat's, or another's).
   rateLimits:
-    u.rateLimits.length > 0
+    !fromService && u.rateLimits.length > 0
       ? u.rateLimits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt }))
       : liveLimits(previous?.rateLimits ?? [], at),
 })
@@ -76,6 +78,59 @@ const recallLimits = async ($: $) => {
   if (rows.length > 0) await update($, measureA, was => (was && was.rateLimits.length === 0 ? { ...was, rateLimits: rows } : was))
 }
 
+/**
+ * The usage service /usage reads: the account's 5-hour and 7-day figures as
+ * they stand, rather than as the last reply reported them.
+ */
+const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
+/** How often an open band asks it, and how long one chat's answer serves every other (so many open chats still ask about four times a minute). */
+const POLL_MS = 15_000
+const SHARE_MS = 14_000
+/** After a turn, ask again sooner, but never more than this often. */
+const MIN_POLL_MS = 5_000
+const SERVICE_KEY = 'serviceLimits'
+// Whether the service has answered this load; while it has, replies' readings are not drawn.
+let fromService = false
+// When this load last asked (or took another chat's answer).
+let polledAt = 0
+
+/**
+ * Brings the 5-hour and 7-day meters up to the usage service's figures: from
+ * another chat's answer under a minute old, else by asking it with the
+ * session's own login (held by the engine; none for an API key or a
+ * third-party provider, and then replies' readings stand).
+ */
+const pollLimits = async ($: $, isAfterTurn = false) => {
+  const now = await $.clock.now()
+  if (now - polledAt < (isAfterTurn ? MIN_POLL_MS : POLL_MS)) return
+  polledAt = now
+  let rows: RateLimitRow[] | undefined
+  if (!isAfterTurn) {
+    const shared = (await $.store.get(SERVICE_KEY).catch(() => undefined)) as { at?: number; rateLimits?: RateLimitRow[] } | undefined
+    if (shared?.at !== undefined && now - shared.at < SHARE_MS && Array.isArray(shared.rateLimits)) rows = shared.rateLimits
+  }
+  if (!rows) {
+    const auth = await $.session.authorize().catch(() => null)
+    if (!auth) return
+    try {
+      const res = await $.http.fetch(USAGE_URL, { auth: auth.handle, headers: { 'anthropic-beta': 'oauth-2025-04-20' } })
+      rows = res.ok ? parseUsage(res.text) : []
+      if (rows.length === 0) {
+        $.ui.log(`session-usage: usage service gave no limits (HTTP ${res.status})`, { to: 'debug' })
+        return
+      }
+    } catch (error) {
+      $.ui.log(`session-usage: usage service unavailable (${String(error).slice(0, 120)})`, { to: 'debug' })
+      return
+    }
+    await $.store.set(SERVICE_KEY, { at: now, rateLimits: rows }).catch(() => undefined)
+  }
+  fromService = true
+  const live = liveLimits(rows, now)
+  await update($, measureA, was => (was ? { ...was, rateLimits: live } : was))
+  await rememberLimits($, live)
+}
+
 // Set by register from the options; read by the helpers below.
 let showStatus = true
 // Where the transcript is, once a settings-hook event has said; a guess until then.
@@ -94,7 +149,7 @@ const pushStatus = async ($: $) => {
 const refreshMeasure = async ($: $) => {
   const [u, now, prev] = await Promise.all([$.session.usage(), $.clock.now(), read($, measureA)])
   await update($, measureA, () => toMeasure(now, u, prev))
-  await rememberLimits($, u.rateLimits)
+  if (!fromService) await rememberLimits($, u.rateLimits)
   if (!hasRecalled) {
     hasRecalled = true
     await recallLimits($).catch(() => undefined)
@@ -134,6 +189,7 @@ const refreshBreakdown = async ($: $, detail: 'summary' | 'full') => {
  */
 const syncLive = async ($: $) => {
   await refreshMeasure($).catch(() => undefined)
+  await pollLimits($).catch(() => undefined)
   await pushStatus($)
   const now = await $.clock.now()
   if (now - breakdownAt >= 4000) {
@@ -430,7 +486,7 @@ export const register: Register = (on, options) => {
     })
     await pushStatus($)
     breakdownAt = 0
-    $.clock.after(10, () => void syncLive($))
+    $.clock.after(10, () => void syncLive($).then(() => pollLimits($, true)))
     return result
   })
 
@@ -454,7 +510,7 @@ export const register: Register = (on, options) => {
   on('session.measure', async ($, e, next) => {
     const now = await $.clock.now()
     await update($, measureA, prev => toMeasure(now, e, prev))
-    await rememberLimits($, e.rateLimits)
+    if (!fromService) await rememberLimits($, e.rateLimits)
     await pushStatus($)
     return next(e)
   })
