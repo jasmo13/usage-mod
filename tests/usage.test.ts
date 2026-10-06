@@ -587,3 +587,20 @@ test('the status line condenses to fit a narrow terminal', async () => {
   expect(at(20), 'cut at the edge past that').toBe('$0.00 · Context: 20% · Session: 19% · Weekly: 13%')
   for (const width of [200, 150, 120, 100, 90, 80, 70, 60, 50]) expect(at(width).length, `${width} cells`).toBeLessThanOrEqual(width)
 })
+
+test('the meters and the details run to the right edge', async ($, on) => {
+  await startWith($, on, { details: true })
+  // The cells a row of columns takes: each column's width and the gaps between them.
+  const span = async (ui: { find: (q: { key: string }) => Promise<{ props: Record<string, unknown>; children: unknown[] } | undefined> }, key: string) => {
+    const box = (await ui.find({ key }))!
+    const cols = box.children.filter((c): c is { props: Record<string, unknown> } => typeof c === 'object' && c !== null)
+    return cols.reduce((a, c) => a + Number(c.props.width), 0) + Number(box.props.columnGap) * (cols.length - 1)
+  }
+  for (const surface of ['terminal', 'desktop'] as const)
+    for (const bodyColumns of [100, 120, 151]) {
+      const ui = await $.ui.mount({ plugin: 'usage-mod', surface, component: 'AbovePrompt', props: { ...BAND_PROPS, bodyColumns } })
+      expect(await span(ui as never, 'head'), `${surface} at ${bodyColumns}: the meters`).toBe(bodyColumns)
+      expect(await span(ui as never, 'sections'), `${surface} at ${bodyColumns}: the details`).toBe(bodyColumns)
+      await ui.unmount()
+    }
+})
