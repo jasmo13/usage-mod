@@ -342,10 +342,12 @@ export const projectSlug = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, '-')
 /** One decimal, a whole one dropped: "134.5k", "33k", "62.4M", as the app writes them. */
 const oneDecimal = (n: number) => n.toFixed(1).replace(/\.0$/, '')
 
-export const fmtTokens = (n: number) => {
-  if (n >= 999_950_000) return `${oneDecimal(n / 1e9)}B`
-  if (n >= 999_950) return `${oneDecimal(n / 1e6)}M`
-  if (n >= 999.5) return `${oneDecimal(n / 1e3)}k`
+/** Tokens as the app writes them ("33k", "134.5k"); `isFixed` keeps the one place always ("33.0k"), as the terminal shows them. */
+export const fmtTokens = (n: number, isFixed = false) => {
+  const place = isFixed ? (x: number) => x.toFixed(1) : oneDecimal
+  if (n >= 999_950_000) return `${place(n / 1e9)}B`
+  if (n >= 999_950) return `${place(n / 1e6)}M`
+  if (n >= 999.5) return `${place(n / 1e3)}k`
   return `${Math.round(n)}`
 }
 
