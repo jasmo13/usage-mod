@@ -133,7 +133,37 @@ export const addToolCall = (
 export const liveLimits = (rows: readonly RateLimitRow[], now: number) =>
   rows.filter(l => l.resetsAt === undefined || !(Date.parse(l.resetsAt) <= now))
 
-export const addCompaction =(m: UsageModel, row: CompactionRow): UsageModel => ({
+/** The windows the band draws a meter for. */
+const LIMIT_KINDS = ['five_hour', 'seven_day'] as const
+
+/**
+ * Reads the usage service's answer (`{ five_hour: { utilization, resets_at }, ... }`)
+ * as rate-limit rows: the windows the band draws, each with a percentage; an
+ * answer of any other shape gives none.
+ */
+export const parseUsage = (text: string): RateLimitRow[] => {
+  let body: unknown
+  try {
+    body = JSON.parse(text)
+  } catch {
+    return []
+  }
+  if (!body || typeof body !== 'object') return []
+  const rows: RateLimitRow[] = []
+  for (const kind of LIMIT_KINDS) {
+    const w = (body as Record<string, { utilization?: unknown; resets_at?: unknown } | null | undefined>)[kind]
+    if (!w || typeof w.utilization !== 'number' || !Number.isFinite(w.utilization)) continue
+    const reset = typeof w.resets_at === 'string' ? Date.parse(w.resets_at) : NaN
+    rows.push({
+      kind,
+      percentUsed: Math.round(w.utilization * 10) / 10,
+      resetsAt: Number.isFinite(reset) ? new Date(reset).toISOString() : undefined,
+    })
+  }
+  return rows
+}
+
+export const addCompaction = (m: UsageModel, row: CompactionRow): UsageModel => ({
   ...m,
   compactions: [...m.compactions, row].slice(-50),
 })

@@ -284,3 +284,38 @@ test('an idle band keeps refreshing with no events', async ($, on) => {
   expect(await ui.find({ text: /\$0\.900/ }), 'read again while idle').toBeDefined()
   await ui.unmount()
 })
+
+test('the limit meters follow the usage service over the last reply', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.parse('2029-12-31T23:00:00Z') })
+  // The last reply's reading, behind the account's figure.
+  on('session.usage', () => ({ value: { ...USAGE, rateLimits: [{ kind: 'five_hour', percentUsed: 9, resetsAt: '2030-01-01T00:00:00Z' }] } }))
+  on('store.get', () => ({ value: undefined }))
+  on('store.set', () => ({ value: undefined }))
+  on('session.authorize', () => ({ value: { handle: 'h1', kind: 'bearer' as const } }))
+  const asked: { url: string; auth?: string }[] = []
+  on('http.fetch', (_$, e) => {
+    asked.push({ url: e.url, auth: e.init?.auth })
+    const body = {
+      five_hour: { utilization: 10.4, resets_at: '2030-01-01T00:00:00+00:00' },
+      seven_day: { utilization: 12, resets_at: '2030-01-05T00:00:00+00:00' },
+      seven_day_opus: null,
+    }
+    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } }
+  })
+  const ui = await $.ui.mount({ plugin: 'session-usage', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  await clock.advance(2_000)
+  expect(asked).toHaveLength(1)
+  expect(asked[0]?.url).toBe('https://api.anthropic.com/api/oauth/usage')
+  expect(asked[0]?.auth, 'the login is the engine’s handle').toBe('h1')
+  expect(await ui.find({ text: /^10%$/ }), '5-hour from the service').toBeDefined()
+  expect(await ui.find({ text: /^12%$/ }), '7-day from the service').toBeDefined()
+  // A reading of the reply does not pull it back.
+  await clock.advance(2_000)
+  expect(await ui.find({ text: /^9%$/ })).toBeUndefined()
+  // Asked again a minute on, not on every tick.
+  await clock.advance(20_000)
+  expect(asked).toHaveLength(1)
+  await clock.advance(40_000)
+  expect(asked).toHaveLength(2)
+  await ui.unmount()
+})
