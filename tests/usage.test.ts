@@ -670,6 +670,43 @@ test("the Copy JSON button copies the band's figures, the same on the desktop an
   expect(await copy('desktop'), 'the desktop copies the same').toEqual(json)
 })
 
+test('Copy JSON checks everything again first, and copies what it found', async ($, on) => {
+  let model = 'claude-opus-5-5'
+  let usage = { ...USAGE }
+  let breakdown = {
+    model, totalTokens: 50_000, rawMaxTokens: 500_000, percentage: 10, autoCompactThreshold: 467_000, isAutoCompactEnabled: true,
+    categories: [{ name: 'Messages', tokens: 50_000, color: 'x', kind: 'used' }], memoryFiles: [], mcpTools: [],
+  }
+  let limit = 20
+  let copied = ''
+  on('session.model', () => ({ value: model }))
+  on('session.authorize', () => ({ value: { handle: 'h1', kind: 'bearer' as const } }))
+  on('http.fetch', () => {
+    const body = { five_hour: { utilization: limit, resets_at: '2030-01-01T00:00:00+00:00' } }
+    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } }
+  })
+  on('ui.copy', (_$, e) => {
+    copied = e.text
+    return { value: { isCopied: true } } as never
+  })
+  await startWith($, on, {}, () => ({ ...usage, context: { ...usage.context, breakdown } }))
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  // All of it moves after the band last looked, and no tick comes before the press.
+  model = 'claude-sonnet-5-5'
+  usage = { ...usage, cost: { usd: 2.25 } }
+  breakdown = { ...breakdown, model, rawMaxTokens: 300_000, percentage: 17, autoCompactThreshold: 267_000 }
+  limit = 64
+  await ui.press({ key: 'menu' })
+  await ui.press({ key: 'copy' })
+  const json = JSON.parse(copied)
+  expect(json.band.model, 'the model now').toMatch(/Sonnet 5\.5/)
+  expect(json.band.costUsd, 'the cost now').toBe(2.25)
+  expect(json.band.contextWindow.window, 'the window now').toBe(300_000)
+  expect(json.breakdown.detail, 'counted exactly').toBe('full')
+  expect(json.band.sessionLimit.percent, "the usage service's answer now").toBe(64)
+  await ui.unmount()
+})
+
 test('the band names a model as soon as it is switched to, before its first reply', async ($, on) => {
   let model = 'claude-opus-5-5'
   on('session.model', () => ({ value: model }))
@@ -726,5 +763,44 @@ test('a smaller window or a new auto-compact setting moves the meter at once, de
   await $.config.set({ key: 'autoCompact', value: false } as never)
   await clock.advance(100)
   expect(await ui.find({ text: /50k left/ }), 'no compaction point, counted to the window').toBeDefined()
+  await ui.unmount()
+})
+
+test('/autocompact moves the meter at once, and a change no hook hears within a second', async ($, on) => {
+  let breakdown = {
+    model: 'claude-opus-5-5', totalTokens: 50_000, rawMaxTokens: 500_000, percentage: 10, autoCompactThreshold: 467_000, isAutoCompactEnabled: true,
+    categories: [{ name: 'Messages', tokens: 50_000, color: 'x', kind: 'used' }], memoryFiles: [], mcpTools: [],
+  }
+  on('command.run', () => ({ text: '' }))
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  const { clock } = await startWith($, on, {}, () => ({ ...USAGE, context: { ...USAGE.context, breakdown } }))
+  await $.session.measure({ context: USAGE.context, rateLimits: USAGE.rateLimits, cost: USAGE.cost, changed: ['context'] })
+  await clock.advance(100)
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await ui.find({ text: /^10%$/ }), '50k of 500k').toBeDefined()
+  // /autocompact 300k
+  breakdown = { ...breakdown, rawMaxTokens: 300_000, autoCompactThreshold: 267_000 }
+  await $.command.run({ command: 'autocompact', args: '300k', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+  await clock.advance(10)
+  expect(await ui.find({ text: /^17%$/ }), 'against 300k at once').toBeDefined()
+  // Moved where no hook hears it: the next check, a second on, finds it.
+  breakdown = { ...breakdown, rawMaxTokens: 500_000, autoCompactThreshold: 467_000 }
+  await clock.advance(1_000)
+  expect(await ui.find({ text: /^10%$/ }), 'back to 500k on the check').toBeDefined()
+  await ui.unmount()
+})
+
+test('any slash command brings the band up to date as soon as it finishes', async ($, on) => {
+  let model = 'claude-opus-5-5'
+  on('session.model', () => ({ value: model }))
+  on('command.run', () => ({ text: '' }))
+  const { clock } = await startWith($, on, {})
+  const ui = await $.ui.mount({ plugin: 'usage-mod', surface: 'desktop', component: 'AbovePrompt', props: BAND_PROPS })
+  expect(await ui.find({ text: /Opus 5\.5/ }), 'the model the chat started on').toBeDefined()
+  // A command no hook of the band's knows about switches the model, with no switch event.
+  model = 'claude-sonnet-5-5'
+  await $.command.run({ command: 'some-other-command', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+  await clock.advance(10)
+  expect(await ui.find({ text: /Sonnet 5\.5/ }), 'named before the next tick').toBeDefined()
   await ui.unmount()
 })
