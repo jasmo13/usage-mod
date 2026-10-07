@@ -2,8 +2,15 @@ import type { RenderElement } from 'claude-code'
 import type { Breakdown, Measure } from '../types'
 import { expect, mock, test, type TestBody } from 'claude-code/testing'
 
-import { cacheHitRate, emptyModel, fmtMs, fmtTokens, fmtUsd, foldTranscript, projectSlug, sumTokens } from '../hooks/collect'
-import { bandFigures, copiedMeasure, rowsOf, statusText, textBar } from '../hooks/views'
+import { cacheHitRate, emptyModel, fmtMs, fmtTokens, fmtUsd, projectSlug, sumTokens, transcriptFolder } from '../hooks/collect'
+import { bandFigures, copiedMeasure, rowsOf, statusText } from '../hooks/views'
+
+/** Folds a whole transcript, as the backfill does line by line. */
+const fold = (jsonl: string, before: number) => {
+  const folder = transcriptFolder({ before })
+  for (const line of jsonl.split('\n')) folder.line(line)
+  return folder.done(emptyModel())
+}
 
 const BAND_PROPS = {
   hasSurvey: false,
@@ -43,7 +50,7 @@ test('the transcript folds once per API message, before the live cut-off', async
     row('m2', '2026-01-01T00:00:03Z'),
     row('m3', '2030-01-01T00:00:00Z'),
   ].join('\n')
-  const m = foldTranscript(emptyModel(), jsonl, { before: Date.parse('2027-01-01T00:00:00Z') })
+  const m = fold(jsonl, Date.parse('2027-01-01T00:00:00Z'))
   expect(m.totals.requests).toBe(2)
   expect(m.totals.output).toBe(1000)
   expect(m.byTool.Read).toMatchObject({ calls: 1, errors: 1 })
@@ -53,11 +60,8 @@ test('the transcript folds once per API message, before the live cut-off', async
   expect(sumTokens(m.totals)).toBe(2 * (10 + 500 + 40_000 + 2_000))
 })
 
-test('helpers: slug and text bars', async () => {
+test('helpers: slug', async () => {
   expect(projectSlug('C:\\Users\\me\\New folder (4)')).toBe('C--Users-me-New-folder--4-')
-  const bar = textBar(0.5, 10)
-  expect(bar.filled).toBe('█████')
-  expect(bar.rest).toBe('░░░░░')
 })
 
 test('a desktop prompt keeps its words when the app prepends a reminder', async () => {
@@ -70,7 +74,7 @@ test('a desktop prompt keeps its words when the app prepends a reminder', async 
     }),
     JSON.stringify({ type: 'user', timestamp: '2026-01-01T00:00:01Z', isCompactSummary: true, message: { role: 'user', content: 'This session is being continued' } }),
   ].join('\n')
-  const m = foldTranscript(emptyModel(), jsonl, { before: Date.parse('2027-01-01T00:00:00Z') })
+  const m = fold(jsonl, Date.parse('2027-01-01T00:00:00Z'))
   expect(m.turns.map(t => t.prompt)).toEqual(['build a mod'])
 })
 
@@ -217,7 +221,7 @@ test('the details show when asked for, however few rows the band has', async ($,
   }
 })
 
-test('the context tile measures against compaction', async ($, on) => {
+test('the Context window meter measures against compaction', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   const breakdown = {
     model: 'claude-opus-5-5',
@@ -549,8 +553,8 @@ test('the limit meters follow the usage service over the last reply', async ($, 
   expect(asked).toHaveLength(1)
   expect(asked[0]?.url).toBe('https://api.anthropic.com/api/oauth/usage')
   expect(asked[0]?.auth, 'the login is the engine’s handle').toBe('h1')
-  expect(await ui.find({ text: /^10%$/ }), '5-hour from the service').toBeDefined()
-  expect(await ui.find({ text: /^12%$/ }), '7-day from the service').toBeDefined()
+  expect(await ui.find({ text: /^10%$/ }), 'session limit from the service').toBeDefined()
+  expect(await ui.find({ text: /^12%$/ }), 'weekly limit from the service').toBeDefined()
   // Named and timed as the app's panel does: time left for the session, the local day and hour for the week.
   expect(await ui.find({ text: /^Session limit$/ })).toBeDefined()
   expect(await ui.find({ text: /^Resets in 1 hr$/ }), 'session reset').toBeDefined()

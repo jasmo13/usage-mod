@@ -9,11 +9,11 @@ import type {
   UsageModel,
 } from '../types'
 
-export const MAX_REQUESTS = 400
-export const MAX_TURNS = 150
+const MAX_REQUESTS = 400
+const MAX_TURNS = 150
 
-export const zeroTokens = (): Tokens => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
-export const zeroBucket = (): Bucket => ({ ...zeroTokens(), requests: 0 })
+const zeroTokens = (): Tokens => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+const zeroBucket =(): Bucket => ({ ...zeroTokens(), requests: 0 })
 
 export const emptyModel = (): UsageModel => ({
   totals: zeroBucket(),
@@ -39,7 +39,7 @@ export const tokensOf = (u: ApiUsage): Tokens => ({
   cacheWrite: u.cache_creation_input_tokens ?? 0,
 })
 
-export const addTokens = <T extends Tokens>(a: T, b: Tokens): T => ({
+const addTokens =<T extends Tokens>(a: T, b: Tokens): T => ({
   ...a,
   input: a.input + b.input,
   output: a.output + b.output,
@@ -48,7 +48,7 @@ export const addTokens = <T extends Tokens>(a: T, b: Tokens): T => ({
 })
 
 export const sumTokens = (t: Tokens) => t.input + t.output + t.cacheRead + t.cacheWrite
-export const promptTokens = (t: Tokens) => t.input + t.cacheRead + t.cacheWrite
+const promptTokens =(t: Tokens) => t.input + t.cacheRead + t.cacheWrite
 
 /** Share of prompt tokens served from the cache, 0..1. */
 export const cacheHitRate = (t: Tokens) => {
@@ -167,17 +167,6 @@ export const addCompaction = (m: UsageModel, row: CompactionRow): UsageModel => 
   ...m,
   compactions: [...m.compactions, row].slice(-50),
 })
-
-/** Cumulative cost per turn, oldest first, from turns that recorded one. */
-export const costSeries = (turns: readonly TurnRow[]) => {
-  let total = 0
-  return turns
-    .filter(t => t.costUsd !== undefined)
-    .map(t => {
-      total += t.costUsd ?? 0
-      return { t: t.startedAt + (t.durationMs ?? 0), total }
-    })
-}
 
 /* ---------- transcript backfill ---------- */
 
@@ -323,17 +312,6 @@ export const transcriptFolder = (options: { before: number; agentId?: string }) 
   return { line, done }
 }
 
-/** Folds a whole transcript held as text; see `transcriptFolder`. */
-export const foldTranscript = (
-  m: UsageModel,
-  jsonl: string,
-  options: { before: number; agentId?: string },
-): UsageModel => {
-  const folder = transcriptFolder(options)
-  for (const line of jsonl.split('\n')) folder.line(line)
-  return folder.done(m)
-}
-
 /** The folder name Claude Code keeps a project's transcripts under. */
 export const projectSlug = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, '-')
 
@@ -365,21 +343,6 @@ export const fmtMs = (ms: number) => {
 }
 
 export const fmtPct = (n: number) => `${n >= 10 || n === 0 ? Math.round(n) : n.toFixed(1)}%`
-
-export const fmtClock = (t: number) => {
-  const d = new Date(t)
-  const hh = `${d.getHours()}`.padStart(2, '0')
-  const mm = `${d.getMinutes()}`.padStart(2, '0')
-  return `${hh}:${mm}`
-}
-
-export const fmtUntil = (iso: string | undefined, now: number) => {
-  if (!iso) return ''
-  const ms = Date.parse(iso) - now
-  if (!Number.isFinite(ms)) return ''
-  if (ms <= 0) return 'resetting'
-  return `resets in ${fmtMs(ms)}`
-}
 
 export const shortModel = (id: string) =>
   id
