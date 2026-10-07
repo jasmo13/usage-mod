@@ -102,7 +102,7 @@ The plugin lives in `plugins/usage-mod/`, so only its own files are installed. T
 | `hooks/collect.ts` | Pure functions that turn events and transcripts into usage totals |
 | `hooks/views.tsx` | The band's layout for the desktop app and the terminal |
 | `types/index.d.ts` | Types for the values the plugin keeps between reloads |
-| `tests/usage.test.ts` | Tests |
+| `tests/register.test.ts` | Tests |
 | `.claude-plugin/plugin.json` | The plugin's manifest and version |
 
 Before opening a pull request, run these from `plugins/usage-mod/`:
