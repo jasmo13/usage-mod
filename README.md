@@ -73,7 +73,7 @@ Then open a new chat, or restart the desktop app; the band shows above the promp
 To try it from a local copy in the terminal without installing:
 
 ```bash
-claude --plugin-dir path/to/usage-mod
+claude --plugin-dir path/to/usage-mod/plugins/usage-mod
 ```
 
 The plugin uses Claude Code's function-hook plugin API, and it was built and tested on Claude Code 2.1.288.
@@ -94,6 +94,8 @@ Then reopen your chats or restart the app.
 
 ## Developing
 
+The plugin lives in `plugins/usage-mod/`, so only its own files are installed. The repository root holds the marketplace (`.claude-plugin/marketplace.json`), this README and the license.
+
 | Path | Contents |
 | --- | --- |
 | `hooks/register.tsx` | Hooks: collecting usage, reading history, checking limits, drawing the band |
@@ -101,8 +103,9 @@ Then reopen your chats or restart the app.
 | `hooks/views.tsx` | The band's layout for the desktop app and the terminal |
 | `types/index.d.ts` | Types for the values the plugin keeps between reloads |
 | `tests/usage.test.ts` | Tests |
+| `.claude-plugin/plugin.json` | The plugin's manifest and version |
 
-Before opening a pull request, run:
+Before opening a pull request, run these from `plugins/usage-mod/`:
 
 ```bash
 claude plugin test .
@@ -119,7 +122,7 @@ claude plugin validate .
 In the same pull request:
 
 - Update this README whenever a change adds a feature or changes what the band shows or how it behaves.
-- To release, bump `version` in `.claude-plugin/plugin.json`.
+- To release, bump `version` in `plugins/usage-mod/.claude-plugin/plugin.json`.
 
 ## License
 

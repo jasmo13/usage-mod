@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "usage-mod",
-      "source": "./",
+      "source": "./plugins/usage-mod",
       "description": "A live usage band above the prompt: cost, tokens, cache, context, rate limits, turns and tools. Desktop and terminal.",
       "author": {
         "name": "Jake Campbell"
