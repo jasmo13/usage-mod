@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
-import type { Backfill, Breakdown, Measure, RateLimitRow, RunningTool, UsageModel } from '../types'
+import type { Backfill, Breakdown, Measure, RateLimitRow, RunningTool } from '../types'
 import {
   addCompaction,
   addRequest,
@@ -59,6 +59,8 @@ const STATUS_KEY = 'statusLine'
 /** The store keys holding whether the details are shown and the band hidden: chosen from the menu or /usage-mod, kept for every chat. */
 const DETAILS_KEY = 'details'
 const HIDDEN_KEY = 'hidden'
+/** Said when the band is hidden, from the menu or /usage-mod. */
+const HIDDEN_TOAST = 'Usage band hidden; /usage-mod shows it again.'
 /** The store key holding the last rate-limit reading, which belongs to the account rather than one chat. */
 const LIMITS_KEY = 'rateLimits'
 let savedLimits = ''
@@ -86,7 +88,7 @@ const recallLimits = async ($: $) => {
 }
 
 /**
- * The usage service /usage reads: the account's 5-hour and 7-day figures as
+ * The usage service /usage reads: the account's session and weekly limits as
  * they stand, rather than as the last reply reported them.
  */
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
@@ -122,7 +124,7 @@ const noteReply = (rows: readonly RateLimitRow[], now: number) => {
 const isReplyNewest = (now: number) => !fromService || (now - serviceAt > STALE_MS && replyAt > serviceAt)
 
 /**
- * Brings the 5-hour and 7-day meters up to the usage service's figures: from
+ * Brings the session and weekly limit meters up to the usage service's figures: from
  * another chat's answer under a minute old, else by asking it with the
  * session's own login (held by the engine; none for an API key or a
  * third-party provider, and then replies' readings stand).
@@ -135,8 +137,8 @@ const pollLimits = async ($: $, isAfterTurn = false, isNow = false) => {
   let rows: RateLimitRow[] | undefined
   let takenAt = now
   if (!isAfterTurn && !isNow) {
-    const shared = (await $.store.get(SERVICE_KEY).catch(() => undefined)) as { at?: number; rateLimits?: RateLimitRow[] } | undefined
-    if (shared?.at !== undefined && now - shared.at < SHARE_MS && Array.isArray(shared.rateLimits)) {
+    const shared = await sharedAnswer($)
+    if (shared && now - shared.at < SHARE_MS) {
       rows = shared.rateLimits
       takenAt = shared.at
     }
@@ -161,6 +163,12 @@ const pollLimits = async ($: $, isAfterTurn = false, isNow = false) => {
   await showService($, rows, takenAt, now)
 }
 
+/** The usage service's last answer, kept by whichever chat asked: when it was taken and the limits it gave. */
+const sharedAnswer = async ($: $) => {
+  const kept = (await $.store.get(SERVICE_KEY).catch(() => undefined)) as { at?: number; rateLimits?: RateLimitRow[] } | undefined
+  return kept?.at !== undefined && Array.isArray(kept.rateLimits) ? { at: kept.at, rateLimits: kept.rateLimits } : undefined
+}
+
 /** Shows the usage service's figures, taken at `takenAt` by this chat or another. */
 const showService = async ($: $, rows: readonly RateLimitRow[], takenAt: number, now: number) => {
   fromService = true
@@ -175,8 +183,8 @@ const showService = async ($: $, rows: readonly RateLimitRow[], takenAt: number,
  * chat's next ask: the limits are the account's, so a reply in any chat moves them in all.
  */
 const adoptShared = async ($: $) => {
-  const shared = (await $.store.get(SERVICE_KEY).catch(() => undefined)) as { at?: number; rateLimits?: RateLimitRow[] } | undefined
-  if (shared?.at === undefined || !Array.isArray(shared.rateLimits) || (fromService && shared.at <= serviceAt)) return
+  const shared = await sharedAnswer($)
+  if (!shared || (fromService && shared.at <= serviceAt)) return
   const now = await $.clock.now()
   if (now - shared.at > STALE_MS) return
   polledAt = now
@@ -285,10 +293,6 @@ const countBreakdown = async ($: $, now: number) => {
 }
 
 /**
- * Brings cost, context and limits up to the moment, and the context breakdown
- * while the details show it: called on every request, tool result and turn.
- */
-/**
  * The main loop's model, as `/model` shows it: read when the session starts, on a switch, and
  * every tick, so a switch shows before the next reply rather than with it. The window
  * and where compaction starts can change with the model (200k, 1M), so a new one counts the
@@ -302,6 +306,10 @@ const syncModel = async ($: $) => {
   void refreshBreakdown($, true)
 }
 
+/**
+ * Brings the model, cost, context and limits up to the moment, and the context breakdown
+ * while the details show it: called every tick and on every request, tool result and turn.
+ */
 const syncLive = async ($: $) => {
   await syncModel($)
   await refreshMeasure($).catch(() => undefined)
@@ -333,7 +341,8 @@ const TICK_MS = 1000
 
 /**
  * The choices made in any chat, kept for every chat: a fresh install shows the band, its details tucked away,
- * and no status line. Read again each tick, so a chat already open (the desktop keeps several) follows a change made in another.
+ * and no status line. Read again each tick and whenever another chat writes the store, so a chat already open
+ * (the desktop keeps several) follows a change made in another.
  */
 const syncChoices = async ($: $) => {
   const chosen = async (key: string) => (await $.store.get(key).catch(() => undefined)) === true
@@ -475,7 +484,7 @@ const READ_LIMIT = 4 * 1024 * 1024
  * (PowerShell on Windows, given the path in its environment so nothing needs
  * quoting; `cat` elsewhere), so it is never held whole.
  */
-export const readLines = async ($: $, path: string, onLine: (line: string) => void) => {
+const readLines =async ($: $, path: string, onLine: (line: string) => void) => {
   const { size } = await $.fs.stat(path)
   if (size < READ_LIMIT) {
     for (const line of (await $.fs.read(path)).split('\n')) onLine(line)
@@ -523,7 +532,7 @@ const backfill = async ($: $) => {
   const path = await findTranscript($, sessionId)
   if (!path) {
     // A new chat has no transcript until its first message, and nothing before the mod to count.
-    const m = (await read($, measureA)) as Measure | null
+    const m = await read($, measureA)
     if (!m?.costUsd) return void (await set({ status: 'done', sessionId, liveSince, version: BACKFILL_VERSION }))
     await set({ status: 'unavailable', sessionId, liveSince, version: BACKFILL_VERSION, note: 'History: transcript not found; counting from when the mod loaded.' })
     return
@@ -634,7 +643,7 @@ export const register: Register = on => {
       await ensureTicker($, await $.clock.now())
     }
     // Said as a notification, as the menu says it, rather than as a line in the transcript.
-    $.ui.toast(isHidden ? 'Usage band hidden; /usage-mod shows it again.' : 'Usage band shown.')
+    $.ui.toast(isHidden ? HIDDEN_TOAST : 'Usage band shown.')
     return {}
   })
 
@@ -678,9 +687,9 @@ export const register: Register = on => {
     })().catch(() => undefined)
     return result
   })
-  // A setting that moves the window or where compaction starts (auto-compact in /config, a settings
-  // file edited): counted again once the change is in, so the meter follows it before the next reply.
-  // A setting set here reaches the other chats by a note; a settings file edited reaches each by itself.
+  // A setting that moves the window or where compaction starts (auto-compact in /config, a settings file
+  // edited) is counted again once the change is in, so the meter follows it before the next reply. One set
+  // here reaches the other chats by a note; an edited settings file reaches each chat by itself.
   on('config.set', ($, e, next) => {
     $.clock.after(10, () => {
       void refreshBreakdown($, true)
@@ -812,7 +821,7 @@ export const register: Register = on => {
     return (
       <T.Box flexDirection="column">
         {hint}
-        {statusLine(T, usage as UsageModel, measure as Measure | null, breakdown as Breakdown | null, now, width)}
+        {statusLine(T, usage, measure, breakdown, now, width)}
       </T.Box>
     )
   })
@@ -844,12 +853,12 @@ export const register: Register = on => {
       cols: e.props.bodyColumns,
       maxRows: otherRows === 0 ? e.props.maxRows : Math.max(1, e.props.maxRows - otherRows - 2),
       now,
-      usage: usage as UsageModel,
-      measure: measure as Measure | null,
-      breakdown: breakdown as Breakdown | null,
-      running: running as RunningTool[],
-      backfill: backfillState as Backfill | null,
-      model: model as string,
+      usage: usage,
+      measure: measure,
+      breakdown: breakdown,
+      running: running,
+      backfill: backfillState,
+      model: model,
       isExpanded,
       isMenuOpen,
       isTerminal: surface === 'terminal',
@@ -870,7 +879,7 @@ export const register: Register = on => {
         await update($, menuA, () => false)
         await update($, hiddenA, () => true)
         await $.store.set(HIDDEN_KEY, true).catch(() => undefined)
-        $.ui.toast('Usage band hidden; /usage-mod shows it again.')
+        $.ui.toast(HIDDEN_TOAST)
       },
       onCopy: async () => {
         await update($, menuA, () => false)

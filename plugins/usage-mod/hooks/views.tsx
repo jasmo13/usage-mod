@@ -103,17 +103,6 @@ const PX = 8
 
 /* ---------- formatting ---------- */
 
-const EIGHTHS = ['', '▏', '▎', '▍', '▌', '▋', '▊', '▉']
-
-/** A block meter: `width` cells, filled to `frac` with eighth-cell precision. */
-export const textBar = (frac: number, width: number) => {
-  const f = Math.max(0, Math.min(1, frac)) * width
-  const full = Math.floor(f)
-  const part = EIGHTHS[Math.round((f - full) * 8)] ?? ''
-  const filled = '█'.repeat(full) + (full < width ? part : '')
-  return { filled, rest: '░'.repeat(Math.max(0, width - [...filled].length)) }
-}
-
 /**
  * When a limit resets, as the app's panel writes it, longest first for the row
  * to pick from: the time left for the session limit ("Resets in 2 hr 37 min"),
@@ -608,7 +597,7 @@ const historyNote = (ctx: Ctx) => {
 /* ---------- Copy JSON ---------- */
 
 /** A limit's name for the copy: "sessionLimit", "weeklyLimit". */
-export const limitKey = (kind: string) => {
+const limitKey =(kind: string) => {
   const [first = '', ...rest] = `${rateLabel(kind)} limit`.toLowerCase().split(/\s+/)
   return first + rest.map(w => `${w[0]!.toUpperCase()}${w.slice(1)}`).join('')
 }
